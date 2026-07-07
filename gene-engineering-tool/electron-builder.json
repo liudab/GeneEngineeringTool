@@ -1,0 +1,21 @@
+{
+  "$schema": "https://raw.githubusercontent.com/electron-userland/electron-builder/master/packages/app-builder-lib/scheme.json",
+  "appId": "com.gene-engineering.assistant",
+  "productName": "基因工程辅助软件",
+  "directories": {
+    "output": "dist"
+  },
+  "files": [
+    "out/**/*",
+    "!node_modules/**/*"
+  ],
+  "extraResources": [
+    {
+      "from": "data",
+      "to": "data"
+    }
+  ],
+  "win": {
+    "target": "nsis"
+  }
+}
