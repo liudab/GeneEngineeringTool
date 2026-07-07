@@ -215,5 +215,14 @@
   "seq.createdAt": "Created At",
   "seq.updatedAt": "Updated At",
   "seq.selectFile": "Select a sequencing file to view details",
-  "seq.editFile": "Edit Sequencing File"
+  "seq.editFile": "Edit Sequencing File",
+  "seq.chromatogram": "Chromatogram",
+  "seq.fullScreen": "Full Screen",
+  "seq.noTraceData": "No chromatogram trace data available. The file may have failed to parse during import.",
+  "seq.refMatched": "Reference sequence matched",
+  "seq.mismatches": "mismatches",
+  "seq.ab1Sequence": "AB1 Called Sequence",
+
+  "editor.alignSequence": "Sequence Alignment",
+  "editor.designPrimers": "Design Primers"
 }

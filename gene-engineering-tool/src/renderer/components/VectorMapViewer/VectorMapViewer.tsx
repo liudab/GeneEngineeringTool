@@ -61,7 +61,10 @@ const FEATURE_COLORS: Record<string, string> = {
   primer_bind: '#ec4899', protein_bind: '#6366f1', regulatory: '#f97316',
   source: '#9ca3af', exon: '#14b8a6', intron: '#a3a3a3',
   five_prime_UTR: '#84cc16', three_prime_UTR: '#e879f9', enhancer: '#fbbf24',
-  ori: '#8b5cf6', antibiotic_resistance: '#ef4444', misc_binding: '#64748b'
+  ori: '#8b5cf6', antibiotic_resistance: '#ef4444', misc_binding: '#64748b',
+  sig_peptide: '#f97316', polyA_signal: '#eab308', STS: '#64748b',
+  ncRNA: '#06b6d4', misc_RNA: '#06b6d4', misc_difference: '#94a3b8',
+  misc_recomb: '#8b5cf6'
 }
 
 // 元件类型 → 图标形状标识

@@ -1,13 +1,29 @@
 import { useState, useEffect } from 'react'
-import { FolderOpen, FileText } from 'lucide-react'
+import { FolderOpen, FileText, AlignLeft, FlaskConical, X } from 'lucide-react'
 import type { GenBankRecord, FastaRecord } from '../../shared/types'
 import PlasmidViewer from '../components/PlasmidViewer/PlasmidViewer'
+import AlignmentViewer from '../components/AlignmentViewer/AlignmentViewer'
+import PrimerDesignPanel from '../components/PrimerDesignPanel/PrimerDesignPanel'
+import { useAlignment } from '../hooks/useAlignment'
+import { usePrimerDesign } from '../hooks/usePrimerDesign'
+import type { AlignmentType } from '../engine/alignment/types'
 
 export default function FileViewerPage() {
   const [fileResult, setFileResult] = useState<any>(null)
   const [genBankData, setGenBankData] = useState<GenBankRecord | null>(null)
   const [fastaData, setFastaData] = useState<FastaRecord[] | null>(null)
   const [viewMode, setViewMode] = useState<'circular' | 'linear'>('circular')
+
+  // 比对 & 引物设计
+  const alignment = useAlignment()
+  const primerDesign = usePrimerDesign()
+  const [showAlignDialog, setShowAlignDialog] = useState(false)
+  const [showPrimerDialog, setShowPrimerDialog] = useState(false)
+  const [alignSeq1, setAlignSeq1] = useState('')
+  const [alignSeq2, setAlignSeq2] = useState('')
+  const [alignName1, setAlignName1] = useState('')
+  const [alignName2, setAlignName2] = useState('')
+  const [alignType, setAlignType] = useState<AlignmentType>('nucleotide-nw')
 
   useEffect(() => {
     // Listen for file open results from sidebar button
@@ -80,6 +96,21 @@ export default function FileViewerPage() {
         <button onClick={handleOpenFile} className="ml-auto px-3 py-1.5 bg-green-600 text-white rounded text-sm hover:bg-green-500">
           打开其他文件
         </button>
+        {genBankData && (
+          <>
+            <button onClick={() => {
+              setAlignSeq1(genBankData.sequence)
+              setAlignName1(genBankData.name)
+              setShowAlignDialog(true)
+            }} className="px-3 py-1.5 border rounded text-sm text-blue-600 hover:bg-blue-50 flex items-center gap-1">
+              <AlignLeft size={14} /> 序列比对
+            </button>
+            <button onClick={() => setShowPrimerDialog(true)}
+              className="px-3 py-1.5 border rounded text-sm text-violet-600 hover:bg-violet-50 flex items-center gap-1">
+              <FlaskConical size={14} /> 引物设计
+            </button>
+          </>
+        )}
       </div>
 
       {genBankData && (
@@ -129,6 +160,94 @@ export default function FileViewerPage() {
           ))}
         </div>
       )}
+
+      {/* 序列比对对话框 */}
+      {showAlignDialog && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-[9999]" onClick={() => { setShowAlignDialog(false); alignment.reset() }}>
+          <div className="bg-white rounded-xl w-[700px] max-h-[85vh] shadow-2xl flex flex-col" onClick={e => e.stopPropagation()} onKeyDown={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-4 py-2 border-b">
+              <h4 className="text-sm font-bold text-blue-700 flex items-center gap-2"><AlignLeft size={14} /> 序列比对</h4>
+              <button onClick={() => { setShowAlignDialog(false); alignment.reset() }} className="p-1 text-slate-400 hover:text-slate-600"><X size={14} /></button>
+            </div>
+            {alignment.status !== 'done' || !alignment.result ? (
+              <div className="p-4 space-y-3 overflow-auto">
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-xs text-slate-600 mb-1 block">序列1名称</label>
+                    <input value={alignName1} onChange={e => setAlignName1(e.target.value)} className="w-full px-2 py-1 border rounded text-xs" />
+                  </div>
+                  <div>
+                    <label className="text-xs text-slate-600 mb-1 block">序列2名称</label>
+                    <input value={alignName2} onChange={e => setAlignName2(e.target.value)} className="w-full px-2 py-1 border rounded text-xs" />
+                  </div>
+                </div>
+                <div>
+                  <label className="text-xs text-slate-600 mb-1 block">比对类型</label>
+                  <select value={alignType} onChange={e => setAlignType(e.target.value as AlignmentType)} className="w-full px-2 py-1 border rounded text-xs">
+                    <option value="nucleotide-nw">核酸全局比对 (NW)</option>
+                    <option value="nucleotide-sw">核酸局部比对 (SW)</option>
+                    <option value="protein">蛋白质比对 (BLOSUM62)</option>
+                    <option value="nucleotide-protein">核酸-蛋白质 (六框翻译)</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="text-xs text-slate-600 mb-1 block">序列1</label>
+                  <textarea value={alignSeq1} onChange={e => setAlignSeq1(e.target.value)} className="w-full h-20 px-2 py-1 border rounded font-mono text-[10px] resize-none" />
+                </div>
+                <div>
+                  <label className="text-xs text-slate-600 mb-1 block">序列2</label>
+                  <textarea value={alignSeq2} onChange={e => setAlignSeq2(e.target.value)} className="w-full h-20 px-2 py-1 border rounded font-mono text-[10px] resize-none" />
+                </div>
+                <div className="flex justify-end">
+                  <button onClick={() => {
+                    alignment.align(
+                      alignSeq1.replace(/\s/g, ''), alignSeq2.replace(/\s/g, ''),
+                      alignType, undefined, alignName1 || 'Seq1', alignName2 || 'Seq2'
+                    )
+                  }} disabled={!alignSeq1 || !alignSeq2 || alignment.status === 'running'}
+                    className="px-4 py-1.5 text-xs bg-blue-600 text-white rounded hover:bg-blue-500 disabled:opacity-40">
+                    {alignment.status === 'running' ? '比对中...' : '开始比对'}
+                  </button>
+                </div>
+                {alignment.status === 'error' && <p className="text-xs text-red-500">{alignment.error}</p>}
+              </div>
+            ) : (
+              <div className="flex-1 flex flex-col overflow-hidden">
+                <AlignmentViewer output={alignment.result} className="flex-1" />
+                <div className="p-2 border-t flex justify-end">
+                  <button onClick={() => { alignment.reset() }}
+                    className="px-3 py-1 text-xs border rounded text-slate-600 hover:bg-slate-50">重新比对</button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* 引物设计对话框 */}
+      {showPrimerDialog && genBankData && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-[9999]" onClick={() => setShowPrimerDialog(false)}>
+          <div className="bg-white rounded-xl w-[420px] max-h-[85vh] shadow-2xl flex flex-col" onClick={e => e.stopPropagation()} onKeyDown={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-4 py-2 border-b">
+              <h4 className="text-sm font-bold text-violet-700 flex items-center gap-2"><FlaskConical size={14} /> 引物设计</h4>
+              <button onClick={() => setShowPrimerDialog(false)} className="p-1 text-slate-400 hover:text-slate-600"><X size={14} /></button>
+            </div>
+            <p className="text-xs text-slate-500 px-4 py-2">请选择要设计引物的区域，然后开始设计。默认使用整个序列。</p>
+            <PrimerDesignPanel
+              templateSeq={genBankData.sequence}
+              selectionStart={0}
+              selectionEnd={genBankData.sequence.length - 1}
+              status={primerDesign.status}
+              result={primerDesign.result}
+              error={primerDesign.error}
+              onDesign={(mode, params) => primerDesign.design(genBankData.sequence, 0, genBankData.sequence.length - 1, mode, params)}
+              selectedPair={primerDesign.selectedPair}
+              onSelectPair={primerDesign.setSelectedPair}
+              className="flex-1 overflow-hidden"
+            />
+          </div>
+        </div>
+      )}
     </div>
   )
 }
@@ -145,7 +264,20 @@ function getFeatureColor(type: string): string {
     primer_bind: 'bg-pink-500',
     protein_bind: 'bg-indigo-500',
     regulatory: 'bg-orange-500',
-    source: 'bg-gray-400'
+    source: 'bg-gray-400',
+    exon: 'bg-teal-500',
+    intron: 'bg-gray-400',
+    five_prime_UTR: 'bg-lime-500',
+    three_prime_UTR: 'bg-fuchsia-400',
+    enhancer: 'bg-amber-400',
+    sig_peptide: 'bg-orange-500',
+    polyA_signal: 'bg-yellow-500',
+    STS: 'bg-slate-500',
+    ncRNA: 'bg-cyan-500',
+    misc_RNA: 'bg-cyan-500',
+    misc_binding: 'bg-slate-500',
+    misc_difference: 'bg-slate-400',
+    misc_recomb: 'bg-purple-500'
   }
   return colors[type] || 'bg-slate-300'
 }

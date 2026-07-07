@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
-import { Save, Circle, Minus, List, Map, X, Trash2, Info, GripHorizontal, Eye, EyeOff, Settings, Pipette } from 'lucide-react'
+import { Save, Circle, Minus, List, Map, X, Trash2, Info, GripHorizontal, Eye, EyeOff, Settings, Pipette, AlignLeft, FlaskConical } from 'lucide-react'
 import VectorMapViewer from '../components/VectorMapViewer/VectorMapViewer'
 import SequenceEditor, { featureTypeName } from '../components/SequenceEditor/SequenceEditor'
 import type { Vector, GenBankFeature, RestrictionEnzyme, FeatureStyles, FeatureShape, FillPattern } from '../../shared/types'
@@ -7,134 +7,32 @@ import { FEATURE_TYPE_NAMES } from '../components/SequenceEditor/SequenceEditor'
 import { useI18n } from '../hooks/useI18n'
 import { serializeSvg, svgToPngDataUrl, pngToJpegDataUrl } from '../utils/export'
 
-interface EnzymeSiteInfo {
-  id: number
-  enzyme_name?: string
-  recognition_sequence?: string
-  cut_position?: number
-  position: number
-  is_unique: boolean
-  recog_start: number  // 识别序列起始位置（序列坐标）
-  recog_end: number    // 识别序列结束位置（序列坐标）
-  strand: 1 | -1       // 1=正链匹配, -1=反链匹配
-}
+import { scanEnzymeSites, getComplement, getReverseComplement, type EnzymeSiteInfo } from '../utils/enzymeScanner'
+import { useAlignment } from '../hooks/useAlignment'
+import { usePrimerDesign } from '../hooks/usePrimerDesign'
+import AlignmentViewer from '../components/AlignmentViewer/AlignmentViewer'
+import PrimerDesignPanel from '../components/PrimerDesignPanel/PrimerDesignPanel'
+import type { AlignmentType } from '../engine/alignment/types'
+import type { DesignedPrimer } from '../engine/primer/types'
 
 interface EditorData {
   vector: Vector
   features: GenBankFeature[]
   enzymeSites: EnzymeSiteInfo[]
+  geneInfo?: { id: number; gene_name: string; type: string; species: string; accession_number: string; description: string }
 }
 
 interface Props {
-  vectorId: number
+  vectorId?: number
+  geneId?: number
+  mode?: 'vector' | 'gene'
 }
 
-/** 扫描序列中所有酶的识别位点 */
-function scanEnzymeSites(sequence: string, enzymes: RestrictionEnzyme[]): EnzymeSiteInfo[] {
-  if (!sequence || sequence.length < 4) return []
-  const seq = sequence.toLowerCase()
-  const isCircular = true // 默认环形可跨越首尾
-  const sites: EnzymeSiteInfo[] = []
-  const seqLen = seq.length
-  // 为环形载体扩展序列（首尾各加30bp）
-  const extSeq = isCircular ? seq.slice(-30) + seq + seq.slice(0, 30) : seq
-  const offset = isCircular ? 30 : 0
+// scanEnzymeSites, iupacToRegex, complement 等已提取到 utils/enzymeScanner.ts
 
-  for (const enzyme of enzymes) {
-    const recog = (enzyme.recognition_sequence || '').toLowerCase().replace(/[^atcgnryswkmbdhv]/g, '')
-    if (recog.length < 4) continue
-    const regex = iupacToRegex(recog)
-    let match: RegExpExecArray | null
-    regex.lastIndex = 0
-    while ((match = regex.exec(extSeq)) !== null) {
-      let recogStart = match.index - offset
-      if (recogStart < 0) recogStart += seqLen
-      if (recogStart >= seqLen) recogStart -= seqLen
-      const recogEnd = (recogStart + recog.length - 1) % seqLen
-      const cutPos = (recogStart + (enzyme.cut_position || 0)) % seqLen
-      sites.push({
-        id: sites.length,
-        enzyme_name: enzyme.name,
-        recognition_sequence: enzyme.recognition_sequence,
-        cut_position: enzyme.cut_position,
-        position: cutPos,
-        is_unique: false,
-        recog_start: recogStart,
-        recog_end: recogEnd,
-        strand: 1 // 正链匹配
-      })
-    }
-    // 同时扫描反义链（reverse complement of recognition sequence）
-    const revRecog = recog.split('').map(c => {
-      const m: Record<string,string> = {a:'t',t:'a',c:'g',g:'c',r:'y',y:'r',s:'s',w:'w',k:'m',m:'k',b:'v',v:'b',d:'h',h:'d',n:'n'}
-      return m[c] || c
-    }).reverse().join('')
-    if (revRecog !== recog) { // 只有非回文序列才需要扫描反义链
-      const revRegex = iupacToRegex(revRecog)
-      revRegex.lastIndex = 0
-      while ((match = revRegex.exec(extSeq)) !== null) {
-        let recogStart = match.index - offset
-        if (recogStart < 0) recogStart += seqLen
-        if (recogStart >= seqLen) recogStart -= seqLen
-        const recogEnd = (recogStart + revRecog.length - 1) % seqLen
-        const cutPos = (recogStart + (enzyme.cut_position || 0)) % seqLen
-        sites.push({
-          id: sites.length,
-          enzyme_name: enzyme.name,
-          recognition_sequence: enzyme.recognition_sequence,
-          cut_position: enzyme.cut_position,
-          position: cutPos,
-          is_unique: false,
-          recog_start: recogStart,
-          recog_end: recogEnd,
-          strand: -1 // 反义链匹配
-        })
-      }
-    }
-  }
-
-  // 更新唯一性
-  const countByName: Record<string, number> = {}
-  sites.forEach(s => { countByName[s.enzyme_name || ''] = (countByName[s.enzyme_name || ''] || 0) + 1 })
-  sites.forEach(s => { s.is_unique = (countByName[s.enzyme_name || ''] || 0) === 1 })
-
-  // 按位置排序
-  sites.sort((a, b) => a.position - b.position)
-  return sites
-}
-
-/** IUPAC 简并碱基转正则 */
-function iupacToRegex(seq: string): RegExp {
-  const map: Record<string, string> = {
-    a: 'a', t: 't', c: 'c', g: 'g',
-    r: '[ag]', y: '[ct]', s: '[gc]', w: '[at]',
-    k: '[gt]', m: '[ac]', b: '[cgt]', d: '[agt]',
-    h: '[act]', v: '[acg]', n: '[atcg]'
-  }
-  const pattern = seq.split('').map(c => map[c] || c).join('')
-  return new RegExp(pattern, 'gi')
-}
-
-/** 碱基互补 */
-function complement(base: string): string {
-  const map: Record<string, string> = {
-    a: 't', t: 'a', c: 'g', g: 'c',
-    r: 'y', y: 'r', s: 's', w: 'w',
-    k: 'm', m: 'k', b: 'v', v: 'b',
-    d: 'h', h: 'd', n: 'n', '.': '.', '-': '-'
-  }
-  return map[base] || base
-}
-
-export function getComplement(seq: string): string {
-  return seq.split('').map(c => complement(c.toLowerCase())).join('')
-}
-
-export function getReverseComplement(seq: string): string {
-  return getComplement(seq).split('').reverse().join('')
-}
-
-export default function VectorEditorPage({ vectorId }: Props) {
+export default function VectorEditorPage({ vectorId, geneId, mode = 'vector' }: Props) {
+  const isGeneMode = mode === 'gene'
+  const entityId = isGeneMode ? geneId! : vectorId!
   const { t, language, changeLanguage, featureTypeLabel } = useI18n()
   const [data, setData] = useState<EditorData | null>(null)
   const [loading, setLoading] = useState(true)
@@ -231,6 +129,17 @@ export default function VectorEditorPage({ vectorId }: Props) {
     try { localStorage.setItem('vectorFeatureHeight', String(featureHeight)) } catch {}
   }, [featureHeight])
 
+  // 比对 & 引物设计状态
+  const alignment = useAlignment()
+  const primerDesign = usePrimerDesign()
+  const [showAlignmentDrawer, setShowAlignmentDrawer] = useState(false)
+  const [showPrimerPanel, setShowPrimerPanel] = useState(false)
+  const [showAlignInputDialog, setShowAlignInputDialog] = useState(false)
+  const [alignInputSeq, setAlignInputSeq] = useState('')
+  const [alignInputName, setAlignInputName] = useState('')
+  const [alignType, setAlignType] = useState<AlignmentType>('nucleotide-nw')
+  const [designedPrimerSites, setDesignedPrimerSites] = useState<any[]>([])
+
   // 元件自定义样式（默认值）
   const defaultFeatureStyles: FeatureStyles = useMemo(() => ({
     gene: { color: '#10b981', shape: 'arrow', fill: 'solid' },
@@ -283,21 +192,44 @@ export default function VectorEditorPage({ vectorId }: Props) {
   useEffect(() => {
     (async () => {
       try {
-        const [result, enzymeList] = await Promise.all([
-          window.api.getEditorData(vectorId),
-          window.api.getEnzymes()
-        ])
-        if (!result) { setError(t('editor.vectorNotFound')); setLoading(false); return }
+        let result: EditorData | null = null
+        const enzymeList = await window.api.getEnzymes()
         setEnzymes(enzymeList || [])
-        const scannedSites = scanEnzymeSites(result.vector.sequence || '', enzymeList || [])
-        const mergedSites = scannedSites.length > 0 ? scannedSites : result.enzymeSites
-        setData({ ...result, enzymeSites: mergedSites })
+
+        if (isGeneMode) {
+          const raw = await window.api.getGeneEditorData(geneId!)
+          if (!raw) { setError('基因序列未找到'); setLoading(false); return }
+          const gene = (raw as any).gene
+          const features: GenBankFeature[] = (raw as any).features || []
+          const topology = (raw as any).topology || gene.topology || 'linear'
+          const seq = gene.sequence || ''
+          const scannedSites = scanEnzymeSites(seq, enzymeList || [], topology === 'circular')
+          result = {
+            vector: {
+              id: gene.id, name: gene.gene_name, sequence: seq,
+              size_bp: seq.length, topology: topology,
+              description: gene.description || '',
+              genbank_accession: gene.accession_number || ''
+            } as Vector,
+            features,
+            enzymeSites: scannedSites,
+            geneInfo: { id: gene.id, gene_name: gene.gene_name, type: gene.type || '', species: gene.species || '', accession_number: gene.accession_number || '', description: gene.description || '' }
+          }
+          setViewMode(topology === 'circular' ? 'circular' : 'linear')
+        } else {
+          const r = await window.api.getEditorData(vectorId!)
+          if (!r) { setError(t('editor.vectorNotFound')); setLoading(false); return }
+          const scannedSites = scanEnzymeSites(r.vector.sequence || '', enzymeList || [])
+          const mergedSites = scannedSites.length > 0 ? scannedSites : r.enzymeSites
+          result = { ...r, enzymeSites: mergedSites }
+        }
+        setData(result)
       } catch (e: any) {
         setError(e.message || t('editor.loadFailed'))
       }
       setLoading(false)
     })()
-  }, [vectorId])
+  }, [entityId])
 
   // 关闭前检测未保存更改
   // 同步脏状态到主进程 + 监听保存并关闭命令
@@ -312,17 +244,21 @@ export default function VectorEditorPage({ vectorId }: Props) {
     if (!window.api.onSaveAndClose) return
     const cleanup = window.api.onSaveAndClose(async () => {
       if (dirty && data) {
-        await window.api.saveSequence(vectorId, data.vector.sequence)
+        if (isGeneMode) {
+          await window.api.saveGeneSequence(geneId!, data.vector.sequence)
+        } else {
+          await window.api.saveSequence(vectorId!, data.vector.sequence)
+        }
       }
     })
     return cleanup
-  }, [dirty, data, vectorId])
+  }, [dirty, data, vectorId, geneId, isGeneMode])
 
   // 导出处理函数
   const handleExport = useCallback(async (format: string) => {
     if (!mapSvgRef.current) return
     const svgEl = mapSvgRef.current
-    const defaultName = data?.vector.name || 'vector-map'
+    const defaultName = data?.vector.name || (isGeneMode ? 'gene-map' : 'vector-map')
 
     if (format === 'svg') {
       const svgContent = serializeSvg(svgEl)
@@ -341,7 +277,7 @@ export default function VectorEditorPage({ vectorId }: Props) {
     if (!mapSvgRef.current || !pendingExportFormat) return
     setShowDpiDialog(false)
     const svgEl = mapSvgRef.current
-    const defaultName = data?.vector.name || 'vector-map'
+    const defaultName = data?.vector.name || (isGeneMode ? 'gene-map' : 'vector-map')
 
     let dataUrl = await svgToPngDataUrl(svgEl, dpi)
     if (pendingExportFormat === 'jpg' || pendingExportFormat === 'jpeg') {
@@ -363,8 +299,8 @@ export default function VectorEditorPage({ vectorId }: Props) {
         case 'zoom-in': setZoom(z => Math.min(z + 0.1, 3)); break
         case 'zoom-out': setZoom(z => Math.max(z - 0.1, 0.3)); break
         case 'zoom-reset': setZoom(1); break
-        case 'save-as-genbank': window.api.saveAsGenBank(vectorId); break
-        case 'save-as-fasta': window.api.saveAsFasta(vectorId); break
+        case 'save-as-genbank': if (!isGeneMode) window.api.saveAsGenBank(vectorId!); break
+        case 'save-as-fasta': window.api.saveAsFasta(entityId); break
         case 'open-file': window.api.openFile(); break
         case 'set-language-zh': changeLanguage('zh'); break
         case 'set-language-en': changeLanguage('en'); break
@@ -377,7 +313,7 @@ export default function VectorEditorPage({ vectorId }: Props) {
       }
     })
     return cleanup
-  }, [vectorId, changeLanguage, handleExport])
+  }, [entityId, changeLanguage, handleExport, isGeneMode])
 
   // 序列修改 → 重新扫描酶切位点 + 自动调整元件位置
   const handleSequenceChange = useCallback((newSeq: string, adjustment?: {
@@ -452,7 +388,8 @@ export default function VectorEditorPage({ vectorId }: Props) {
       }
     }
 
-    const newSites = scanEnzymeSites(newSeq, enzymes)
+    const isCircular = (data.vector.topology || 'circular') === 'circular'
+    const newSites = scanEnzymeSites(newSeq, enzymes, isCircular)
     setData({
       ...data,
       vector: { ...data.vector, sequence: newSeq, size_bp: newSeq.length },
@@ -483,11 +420,15 @@ export default function VectorEditorPage({ vectorId }: Props) {
   // 保存
   const handleSave = useCallback(async () => {
     if (!data) return
-    await window.api.saveSequence(vectorId, data.vector.sequence)
+    if (isGeneMode) {
+      await window.api.saveGeneSequence(geneId!, data.vector.sequence)
+    } else {
+      await window.api.saveSequence(vectorId!, data.vector.sequence)
+    }
     setDirty(false)
     setSaveMsg(t('editor.saved'))
     setTimeout(() => setSaveMsg(''), 2000)
-  }, [data, vectorId])
+  }, [data, vectorId, geneId, isGeneMode])
 
   // 图谱点击元件 → 设置序列选择
   const handleMapSelectFeature = useCallback((idx: number | null) => {
@@ -511,13 +452,97 @@ export default function VectorEditorPage({ vectorId }: Props) {
     }
   }, [])
 
+  // 比对 & 引物设计回调
+  const handleAlignSelection = useCallback(() => {
+    setShowAlignInputDialog(true)
+  }, [])
+
+  const handleDoAlignment = useCallback(() => {
+    if (!alignInputSeq || !seqSelection || !data) return
+    const seq1 = data.vector.sequence.substring(seqSelection.start, seqSelection.end + 1)
+    const name1 = `${vector.name} [${seqSelection.start + 1}..${seqSelection.end + 1}]`
+    const name2 = alignInputName || 'Input Sequence'
+    alignment.align(seq1, alignInputSeq.trim().replace(/\s/g, ''), alignType, undefined, name1, name2)
+    setShowAlignInputDialog(false)
+    setShowAlignmentDrawer(true)
+    setAlignInputSeq('')
+    setAlignInputName('')
+  }, [alignInputSeq, alignInputName, alignType, seqSelection, data, vector, alignment])
+
+  const handleDesignPrimers = useCallback(() => {
+    if (!seqSelection || !data) return
+    setShowPrimerPanel(true)
+    setShowFeatureList(false)
+  }, [seqSelection, data])
+
+  const handlePrimerDesignRun = useCallback((mode: any, params?: any) => {
+    if (!seqSelection || !data) return
+    primerDesign.design(data.vector.sequence, seqSelection.start, seqSelection.end, mode, params)
+  }, [seqSelection, data, primerDesign])
+
+  const handleShowPrimersOnSequence = useCallback((pair: DesignedPrimer) => {
+    if (!data) return
+    const sites: any[] = []
+    // Forward primer
+    sites.push({
+      primer_id: -1,
+      primer_name: `Designed-F`,
+      sequence: pair.forward.sequence,
+      position: pair.forward.position + 1,
+      recog_start: pair.forward.position,
+      recog_end: pair.forward.position + pair.forward.length - 1,
+      strand: 1 as const
+    })
+    // Reverse primer
+    sites.push({
+      primer_id: -2,
+      primer_name: `Designed-R`,
+      sequence: pair.reverse.sequence,
+      position: pair.reverse.position + 1,
+      recog_start: pair.reverse.position,
+      recog_end: pair.reverse.position + pair.reverse.length - 1,
+      strand: -1 as const
+    })
+    setDesignedPrimerSites(sites)
+  }, [data])
+
+  const handleSavePrimersToDb = useCallback(async (pair: DesignedPrimer) => {
+    try {
+      const name = `Designed_${vector.name}_${pair.productStart + 1}-${pair.productEnd}`
+      await window.api.createPrimer({
+        name: `${name}_F`,
+        sequence: pair.forward.sequence,
+        category: 'lab',
+        tm: pair.forward.tm,
+        gc_content: pair.forward.gc,
+        description: `Auto-designed (score: ${pair.pairScore}), product: ${pair.productLength}bp`,
+        source: '引物设计模块',
+        target_gene_id: isGeneMode ? geneId : null
+      })
+      await window.api.createPrimer({
+        name: `${name}_R`,
+        sequence: pair.reverse.sequence,
+        category: 'lab',
+        tm: pair.reverse.tm,
+        gc_content: pair.reverse.gc,
+        description: `Auto-designed (score: ${pair.pairScore}), product: ${pair.productLength}bp`,
+        source: '引物设计模块',
+        target_gene_id: isGeneMode ? geneId : null
+      })
+      alert(`引物对已保存到数据库: ${name}_F / ${name}_R`)
+    } catch (e: any) {
+      alert('保存失败: ' + (e.message || '未知错误'))
+    }
+  }, [vector, isGeneMode, geneId])
+
+  const allPrimerSites = useMemo(() => [...primerSites, ...designedPrimerSites], [primerSites, designedPrimerSites])
+
   if (loading) {
     return <div className="flex items-center justify-center h-screen bg-slate-50"><div className="text-slate-400 text-sm">{t('editor.loading')}</div></div>
   }
   if (error || !data) {
     return <div className="flex items-center justify-center h-screen bg-slate-50"><div className="text-red-500 text-sm">{error || t('editor.loadFailed')}</div></div>
   }
-
   const { vector, features, enzymeSites } = data
   const selectedFeat = selectedFeature !== null ? features[selectedFeature] : null
   // 根据设置过滤酶切位点（显示所有/仅唯一 + 隐藏酶切位点）
@@ -529,17 +554,19 @@ export default function VectorEditorPage({ vectorId }: Props) {
       {/* 顶部工具栏 */}
       <header className="h-12 bg-white border-b border-slate-200 flex items-center px-4 flex-shrink-0 gap-3">
         <h1 className="text-sm font-bold text-slate-800 truncate max-w-[200px]">{vector.name}</h1>
+        {isGeneMode && <span className="px-1.5 py-0.5 text-[10px] rounded bg-pink-100 text-pink-700">Gene</span>}
+        {isGeneMode && data?.geneInfo?.species && <span className="text-xs text-slate-400 italic truncate max-w-[120px]">{data.geneInfo.species}</span>}
         <span className="text-xs text-slate-400">{vector.size_bp?.toLocaleString()} bp</span>
-        <span className={`px-1.5 py-0.5 text-[10px] rounded ${vector.topology === 'circular' ? 'bg-violet-100 text-violet-700' : 'bg-slate-100 text-slate-600'}`}>
-          {vector.topology === 'circular' ? t('editor.topology.circular') : t('editor.topology.linear')}
+        <span className={`px-1.5 py-0.5 text-[10px] rounded ${(isGeneMode ? viewMode : vector.topology) === 'circular' ? 'bg-violet-100 text-violet-700' : 'bg-slate-100 text-slate-600'}`}>
+          {(isGeneMode ? viewMode : vector.topology) === 'circular' ? t('editor.topology.circular') : t('editor.topology.linear')}
         </span>
         <div className="w-px h-5 bg-slate-200" />
         <div className="flex border border-slate-200 rounded overflow-hidden">
-          <button onClick={() => setViewMode('circular')}
+          <button onClick={() => { setViewMode('circular'); if (isGeneMode && data) setData({ ...data, vector: { ...data.vector, topology: 'circular' } }) }}
             className={`px-2.5 py-1 text-xs flex items-center gap-1 ${viewMode === 'circular' ? 'bg-violet-600 text-white' : 'text-slate-600 hover:bg-slate-50'}`}>
             <Circle size={12} /> {t('editor.view.circular')}
           </button>
-          <button onClick={() => setViewMode('linear')}
+          <button onClick={() => { setViewMode('linear'); if (isGeneMode && data) setData({ ...data, vector: { ...data.vector, topology: 'linear' } }) }}
             className={`px-2.5 py-1 text-xs flex items-center gap-1 ${viewMode === 'linear' ? 'bg-violet-600 text-white' : 'text-slate-600 hover:bg-slate-50'}`}>
             <Minus size={12} /> {t('editor.view.linear')}
           </button>
@@ -629,6 +656,14 @@ export default function VectorEditorPage({ vectorId }: Props) {
           className={`px-2.5 py-1 text-xs border rounded flex items-center gap-1 ${primerSites.length > 0 ? 'bg-cyan-100 text-cyan-700' : 'text-slate-600 hover:bg-slate-50'}`}>
           <Pipette size={12} /> {primerScanLoading ? '比对中...' : primerSites.length > 0 ? `${t('editor.scanPrimers')} (${primerSites.length})` : t('editor.scanPrimers')}
         </button>
+        <button onClick={() => { setShowAlignmentDrawer(!showAlignmentDrawer); if (!showAlignmentDrawer && seqSelection) handleAlignSelection() }}
+          className={`px-2.5 py-1 text-xs border rounded flex items-center gap-1 ${showAlignmentDrawer ? 'bg-blue-100 text-blue-700' : 'text-slate-600 hover:bg-slate-50'}`}>
+          <AlignLeft size={12} /> {t('editor.alignSequence') || '序列比对'}
+        </button>
+        <button onClick={() => { setShowPrimerPanel(!showPrimerPanel); if (!showPrimerPanel) setShowFeatureList(false) }}
+          className={`px-2.5 py-1 text-xs border rounded flex items-center gap-1 ${showPrimerPanel ? 'bg-violet-100 text-violet-700' : 'text-slate-600 hover:bg-slate-50'}`}>
+          <FlaskConical size={12} /> {t('editor.designPrimers') || '设计引物'}
+        </button>
         <div className="flex-1" />
         {dirty && <span className="text-xs text-amber-500">{t('editor.unsaved')}</span>}
         {saveMsg && <span className="text-xs text-green-600">{saveMsg}</span>}
@@ -686,7 +721,7 @@ export default function VectorEditorPage({ vectorId }: Props) {
               sequence={vector.sequence || ''}
               features={features}
               enzymeSites={displayEnzymeSites}
-              primerSites={primerSites}
+              primerSites={allPrimerSites}
               onSequenceChange={handleSequenceChange}
               onAddFeature={handleAddFeature}
               onDeleteFeature={handleDeleteFeature}
@@ -697,6 +732,8 @@ export default function VectorEditorPage({ vectorId }: Props) {
               onClearMapSelection={() => setMapSelection(null)}
               onSelectionChange={handleSeqSelectionChange}
               onHoverPosition={handleSeqHoverPosition}
+              onAlignSelection={handleAlignSelection}
+              onDesignPrimers={handleDesignPrimers}
             />
           </div>
         </div>
@@ -1063,6 +1100,112 @@ export default function VectorEditorPage({ vectorId }: Props) {
           </div>
         </div>
       )}
+
+      {/* 序列比对输入对话框 */}
+      {showAlignInputDialog && (
+        <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-[9999]" onClick={() => setShowAlignInputDialog(false)}>
+          <div className="bg-white rounded-xl p-5 w-[520px] shadow-2xl" onClick={e => e.stopPropagation()} onKeyDown={e => e.stopPropagation()}>
+            <h4 className="font-bold text-sm mb-3 flex items-center gap-2">
+              <AlignLeft size={16} className="text-blue-600" /> {t('editor.alignSequence') || '序列比对'}
+            </h4>
+            {seqSelection && (
+              <p className="text-xs text-slate-500 mb-3">
+                选区: {seqSelection.start + 1}..{seqSelection.end + 1} ({seqSelection.end - seqSelection.start + 1} bp)
+              </p>
+            )}
+            <div className="mb-3">
+              <label className="text-xs text-slate-600 mb-1 block">比对类型</label>
+              <select value={alignType} onChange={e => setAlignType(e.target.value as AlignmentType)}
+                className="w-full px-2 py-1.5 border rounded text-xs">
+                <option value="nucleotide-nw">核酸全局比对 (Needleman-Wunsch)</option>
+                <option value="nucleotide-sw">核酸局部比对 (Smith-Waterman)</option>
+                <option value="protein">蛋白质比对 (BLOSUM62)</option>
+                <option value="nucleotide-protein">核酸-蛋白质 (六框翻译)</option>
+              </select>
+            </div>
+            <div className="mb-3">
+              <label className="text-xs text-slate-600 mb-1 block">序列名称（可选）</label>
+              <input value={alignInputName} onChange={e => setAlignInputName(e.target.value)}
+                placeholder="输入序列名称" className="w-full px-2 py-1.5 border rounded text-xs" />
+            </div>
+            <div className="mb-3">
+              <label className="text-xs text-slate-600 mb-1 block">输入要比对的序列</label>
+              <textarea value={alignInputSeq} onChange={e => setAlignInputSeq(e.target.value)}
+                className="w-full h-32 px-3 py-2 border rounded font-mono text-xs resize-none focus:outline-none focus:ring-1 focus:ring-blue-300"
+                placeholder={alignType === 'protein' ? '输入氨基酸序列 (如: MVLSPAD...)' : '输入核酸序列 (如: ATCGATCG...)'} />
+              <div className="flex justify-between mt-1">
+                <span className="text-[10px] text-slate-400">{alignInputSeq.replace(/\s/g, '').length} {alignType === 'protein' ? 'aa' : 'bp'}</span>
+                <button onClick={() => {
+                  navigator.clipboard.readText().then(t => setAlignInputSeq(t))
+                }} className="text-[10px] text-blue-600 hover:underline">从剪贴板粘贴</button>
+              </div>
+            </div>
+            <div className="flex gap-2 justify-end">
+              <button onClick={() => setShowAlignInputDialog(false)}
+                className="px-3 py-1.5 text-xs border rounded">取消</button>
+              <button onClick={handleDoAlignment} disabled={!alignInputSeq || !seqSelection}
+                className="px-3 py-1.5 text-xs bg-blue-600 text-white rounded hover:bg-blue-500 disabled:opacity-40">
+                {alignment.status === 'running' ? '比对中...' : '开始比对'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 比对结果抽屉 */}
+      {showAlignmentDrawer && (
+        <div className="fixed inset-y-0 right-0 w-[600px] bg-white shadow-2xl border-l border-slate-200 z-[9998] flex flex-col">
+          <div className="flex items-center justify-between px-4 py-2 border-b border-slate-200">
+            <h4 className="text-sm font-bold text-blue-700 flex items-center gap-2">
+              <AlignLeft size={14} /> 比对结果
+            </h4>
+            <button onClick={() => { setShowAlignmentDrawer(false); alignment.reset() }}
+              className="p-1 text-slate-400 hover:text-slate-600"><X size={14} /></button>
+          </div>
+          {alignment.status === 'running' && (
+            <div className="flex-1 flex items-center justify-center text-slate-400 text-sm">
+              <div className="animate-spin w-5 h-5 border-2 border-blue-400 border-t-transparent rounded-full mr-2" />
+              比对计算中...
+            </div>
+          )}
+          {alignment.status === 'error' && (
+            <div className="flex-1 flex items-center justify-center text-red-500 text-sm">{alignment.error}</div>
+          )}
+          {alignment.status === 'done' && alignment.result && (
+            <AlignmentViewer output={alignment.result} className="flex-1" />
+          )}
+          {alignment.status === 'idle' && (
+            <div className="flex-1 flex items-center justify-center text-slate-400 text-sm">请在序列编辑器中选择区域后点击比对</div>
+          )}
+        </div>
+      )}
+
+      {/* 引物设计面板 */}
+      {showPrimerPanel && (
+        <div className="fixed inset-y-0 right-0 w-[380px] bg-white shadow-2xl border-l border-slate-200 z-[9998] flex flex-col">
+          <div className="flex items-center justify-between px-4 py-2 border-b border-slate-200">
+            <h4 className="text-sm font-bold text-violet-700 flex items-center gap-2">
+              <FlaskConical size={14} /> 引物设计
+            </h4>
+            <button onClick={() => setShowPrimerPanel(false)}
+              className="p-1 text-slate-400 hover:text-slate-600"><X size={14} /></button>
+          </div>
+          <PrimerDesignPanel
+            templateSeq={data?.vector.sequence || ''}
+            selectionStart={seqSelection?.start ?? 0}
+            selectionEnd={seqSelection?.end ?? 0}
+            status={primerDesign.status}
+            result={primerDesign.result}
+            error={primerDesign.error}
+            onDesign={handlePrimerDesignRun}
+            selectedPair={primerDesign.selectedPair}
+            onSelectPair={primerDesign.setSelectedPair}
+            onShowOnSequence={handleShowPrimersOnSequence}
+            onSaveToDatabase={handleSavePrimersToDb}
+            className="flex-1"
+          />
+        </div>
+      )}
     </div>
   )
 }
@@ -1081,7 +1224,13 @@ function getColor(type: string): string {
     gene: '#10b981', CDS: '#3b82f6', mRNA: '#06b6d4', promoter: '#f59e0b',
     terminator: '#ef4444', rep_origin: '#8b5cf6', misc_feature: '#94a3b8',
     primer_bind: '#ec4899', protein_bind: '#6366f1', regulatory: '#f97316',
-    enhancer: '#fbbf24', exon: '#14b8a6'
+    enhancer: '#fbbf24', exon: '#14b8a6', intron: '#a3a3a3',
+    five_prime_UTR: '#84cc16', three_prime_UTR: '#e879f9',
+    sig_peptide: '#f97316', polyA_signal: '#eab308',
+    STS: '#64748b', ncRNA: '#06b6d4', misc_RNA: '#06b6d4',
+    misc_binding: '#64748b', misc_difference: '#94a3b8',
+    misc_recomb: '#8b5cf6', source: '#9ca3af',
+    ori: '#8b5cf6', antibiotic_resistance: '#ef4444'
   }
   return colors[type] || '#cbd5e1'
 }

@@ -26,6 +26,10 @@ const api = {  // 酶
   updateGene: (id: number, data: any) => ipcRenderer.invoke(IPC_CHANNELS.GENE_UPDATE, id, data),
   deleteGene: (id: number) => ipcRenderer.invoke(IPC_CHANNELS.GENE_DELETE, id),
   getGeneRelations: (geneId: number) => ipcRenderer.invoke(IPC_CHANNELS.GENE_RELATIONS, geneId),
+  importGeneFiles: () => ipcRenderer.invoke(IPC_CHANNELS.GENE_IMPORT_FILE),
+  openGeneEditor: (geneId: number) => ipcRenderer.invoke(IPC_CHANNELS.GENE_EDITOR_OPEN, geneId),
+  getGeneEditorData: (geneId: number) => ipcRenderer.invoke(IPC_CHANNELS.GENE_EDITOR_GET_DATA, geneId),
+  saveGeneSequence: (geneId: number, sequence: string) => ipcRenderer.invoke(IPC_CHANNELS.GENE_EDITOR_SAVE_SEQUENCE, geneId, sequence),
 
   // 实验室载体
   getLabVectors: () => ipcRenderer.invoke(IPC_CHANNELS.LAB_VECTOR_LIST),
@@ -33,6 +37,7 @@ const api = {  // 酶
   createLabVector: (data: any) => ipcRenderer.invoke(IPC_CHANNELS.LAB_VECTOR_CREATE, data),
   updateLabVector: (id: number, data: any) => ipcRenderer.invoke(IPC_CHANNELS.LAB_VECTOR_UPDATE, id, data),
   deleteLabVector: (id: number) => ipcRenderer.invoke(IPC_CHANNELS.LAB_VECTOR_DELETE, id),
+  importLabVectorFiles: () => ipcRenderer.invoke(IPC_CHANNELS.LAB_VECTOR_IMPORT_FILE),
 
   // 文件
   openFile: () => ipcRenderer.invoke(IPC_CHANNELS.FILE_OPEN),

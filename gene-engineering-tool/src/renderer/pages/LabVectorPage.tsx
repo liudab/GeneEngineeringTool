@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Search, Plus, Trash2, Edit2, X, Link2 } from 'lucide-react'
+import { Search, Plus, Trash2, Edit2, X, Link2, Upload, Map } from 'lucide-react'
 import type { LabVector, Vector, GeneSequence } from '../../shared/types'
 
 export default function LabVectorPage() {
@@ -14,6 +14,17 @@ export default function LabVectorPage() {
     name: '', vector_id: null as number | null, insert_gene_id: null as number | null,
     empty_vector_id: null as number | null, notes: ''
   })
+
+  const [importMsg, setImportMsg] = useState('')
+
+  const handleImport = async () => {
+    const result = await window.api.importLabVectorFiles()
+    if (result?.success && result.count > 0) {
+      setImportMsg(`成功导入 ${result.count} 个载体`)
+      loadLabVectors()
+      setTimeout(() => setImportMsg(''), 3000)
+    }
+  }
 
   useEffect(() => {
     loadLabVectors()
@@ -71,6 +82,9 @@ export default function LabVectorPage() {
           <button onClick={handleCreate} className="px-3 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-500 flex items-center gap-1">
             <Plus size={16} /> 添加
           </button>
+          <button onClick={handleImport} className="px-3 py-2 bg-orange-500 text-white rounded-lg text-sm hover:bg-orange-400 flex items-center gap-1" title="导入 GenBank/FASTA/.dna 文件">
+            <Upload size={16} /> 导入
+          </button>
         </div>
 
         <div className="flex-1 overflow-auto bg-white rounded-lg border border-slate-200">
@@ -95,6 +109,10 @@ export default function LabVectorPage() {
                   <td className="px-4 py-2 text-slate-600 text-xs">{lv.empty_vector_name || '-'}</td>
                   <td className="px-4 py-2 text-slate-500 text-xs">{lv.created_at?.split('T')[0] || lv.created_at}</td>
                   <td className="px-4 py-2 text-right">
+                    <button onClick={(e) => { e.stopPropagation(); if (lv.vector_id) window.api.openEditor(lv.vector_id) }}
+                      className={`p-1 ${lv.vector_id ? 'text-slate-400 hover:text-violet-600' : 'text-slate-200 cursor-not-allowed'}`} title={lv.vector_id ? '打开图谱编辑器' : '无关联载体'}>
+                      <Map size={14} />
+                    </button>
                     <button onClick={(e) => { e.stopPropagation(); handleEdit(lv) }} className="p-1 text-slate-400 hover:text-blue-600"><Edit2 size={14} /></button>
                     <button onClick={(e) => { e.stopPropagation(); handleDelete(lv.id) }} className="p-1 text-slate-400 hover:text-red-600 ml-1"><Trash2 size={14} /></button>
                   </td>
@@ -104,13 +122,21 @@ export default function LabVectorPage() {
           </table>
           {filtered.length === 0 && <div className="text-center py-12 text-slate-400">暂无数据</div>}
         </div>
+        {importMsg && <div className="text-xs text-green-600 mt-2">{importMsg}</div>}
       </div>
 
       {selected && (
         <div className="w-80 bg-white rounded-lg border border-slate-200 p-5 flex-shrink-0 overflow-auto">
           <div className="flex items-center justify-between mb-4">
             <h3 className="text-lg font-bold text-slate-800">{selected.name}</h3>
-            <button onClick={() => setSelected(null)} className="p-1 text-slate-400 hover:text-slate-600"><X size={16} /></button>
+            <div className="flex items-center gap-2">
+              {selected.vector_id && (
+                <button onClick={() => window.api.openEditor(selected.vector_id)} className="px-2 py-1 bg-blue-600 text-white rounded text-xs flex items-center gap-1 hover:bg-blue-500" title="打开图谱编辑器">
+                  <Map size={12} /> 图谱
+                </button>
+              )}
+              <button onClick={() => setSelected(null)} className="p-1 text-slate-400 hover:text-slate-600"><X size={16} /></button>
+            </div>
           </div>
           <div className="space-y-3">
             <div><label className="text-xs font-medium text-slate-500 uppercase">关联载体</label>

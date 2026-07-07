@@ -38,17 +38,21 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { hasError: boole
  * 检测URL查询参数，判断是否为编辑器模式
  * 编辑器窗口通过 ?vectorId=X&mode=editor 打开
  */
-function getEditorMode(): { isEditor: boolean; vectorId?: number } {
+function getEditorMode(): { isEditor: boolean; vectorId?: number; isGeneEditor: boolean; geneId?: number } {
   try {
     const params = new URLSearchParams(window.location.search)
     const mode = params.get('mode')
     const vectorId = params.get('vectorId')
-    console.log('[App] getEditorMode:', { mode, vectorId, search: window.location.search })
+    const geneId = params.get('geneId')
+    console.log('[App] getEditorMode:', { mode, vectorId, geneId, search: window.location.search })
     if (mode === 'editor' && vectorId) {
-      return { isEditor: true, vectorId: Number(vectorId) }
+      return { isEditor: true, vectorId: Number(vectorId), isGeneEditor: false }
+    }
+    if (mode === 'gene-editor' && geneId) {
+      return { isEditor: false, isGeneEditor: true, geneId: Number(geneId) }
     }
   } catch (e) { console.error('[App] getEditorMode error:', e) }
-  return { isEditor: false }
+  return { isEditor: false, isGeneEditor: false }
 }
 
 export default function App() {
@@ -79,6 +83,14 @@ export default function App() {
     return (
       <ErrorBoundary>
         <VectorEditorPage vectorId={editorMode.vectorId!} />
+      </ErrorBoundary>
+    )
+  }
+
+  if (editorMode.isGeneEditor) {
+    return (
+      <ErrorBoundary>
+        <VectorEditorPage geneId={editorMode.geneId!} mode="gene" />
       </ErrorBoundary>
     )
   }

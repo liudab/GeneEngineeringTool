@@ -4,9 +4,9 @@ import path from 'path'
 import { IPC_CHANNELS } from '../shared/types'
 import type { Vector, GenBankFeature } from '../shared/types'
 import * as db from './database'
-import { parseGenBank, parseFasta, parseSnapGene } from './file-parser'
+import { parseGenBank, parseFasta, parseSnapGene, inferExonIntronFeatures } from './file-parser'
 import { parseAb1 } from './ab1-parser'
-import { createEditorWindow } from './index'
+import { createEditorWindow, createGeneEditorWindow } from './index'
 import { setLanguage } from '../shared/i18n'
 import { buildMenu } from './menu'
 import { generateGenBank, generateFasta } from './genbank-writer'
@@ -482,6 +482,7 @@ export function registerIpcHandlers(): void {
       if (ext === '.ab1') {
         try {
           const buffer = readFileSync(filePath)
+          console.log(`[AB1] Parsing file: ${fileName} (${buffer.length} bytes)`)
           const ab1 = parseAb1(buffer)
           sequence = ab1.sequence
           traceData = JSON.stringify(ab1.traces)
@@ -489,6 +490,7 @@ export function registerIpcHandlers(): void {
           qualityValues = JSON.stringify(ab1.qualityValues)
           runInfo = ab1.runInfo
           sampleName = ab1.sampleName || sampleName
+          console.log(`[AB1] Parse success: seq=${ab1.sequence.length}bp, traces=${ab1.dataPoints}pts, peaks=${ab1.peakPositions.length}`)
         } catch (err: any) {
           console.error(`[AB1] 解析失败 ${fileName}:`, err.message)
           // 解析失败仍然导入文件，只是没有 trace 数据
@@ -548,6 +550,273 @@ export function registerIpcHandlers(): void {
     if (file.quality_values) {
       try { result.quality_values_parsed = JSON.parse(file.quality_values) } catch { /* ignore */ }
     }
+    // AB1 文件但无 trace 数据：尝试从磁盘文件重新解析
+    if (file.file_type === 'ab1' && !result.trace_data_parsed && file.file_path) {
+      try {
+        if (existsSync(file.file_path)) {
+          console.log(`[SeqFile] Re-parsing AB1 file: ${file.file_path}`)
+          const buffer = readFileSync(file.file_path)
+          const ab1 = parseAb1(buffer)
+          result.trace_data_parsed = ab1.traces
+          result.peak_positions_parsed = ab1.peakPositions
+          result.quality_values_parsed = ab1.qualityValues
+          // 如果 AB1 解析出了序列，回写到数据库
+          if (ab1.sequence && !file.sequence) {
+            result.sequence = ab1.sequence
+          }
+          // 回写到数据库
+          const updateData: any = {
+            trace_data: JSON.stringify(ab1.traces),
+            peak_positions: JSON.stringify(ab1.peakPositions),
+            quality_values: JSON.stringify(ab1.qualityValues)
+          }
+          if (ab1.sequence && !file.sequence) {
+            updateData.sequence = ab1.sequence
+          }
+          db.updateSequencingFile(id, updateData)
+          console.log(`[SeqFile] Re-parse AB1 success: ${ab1.sequence.length}bp, ${ab1.dataPoints} trace points`)
+        } else {
+          console.log(`[SeqFile] AB1 file not found on disk: ${file.file_path}`)
+        }
+      } catch (e: any) { console.error('[SeqFile] Re-parse AB1 failed:', e.message) }
+    }
+    // 自动匹配对应的 SEQ/FASTA 参考序列
+    if (file.file_type === 'ab1') {
+      try {
+        const allSeqFiles = db.getSequencingFiles()
+        // 匹配策略：sample_name 相同，或文件名去掉扩展名后相同
+        const ab1BaseName = file.file_name.replace(/\.[^.]+$/, '').toLowerCase()
+        const ab1Sample = (file.sample_name || '').toLowerCase().trim()
+        let bestMatch: typeof allSeqFiles[0] | null = null
+        for (const sf of allSeqFiles) {
+          if (sf.file_type === 'ab1' || sf.id === id) continue
+          if (!sf.sequence) continue
+          const sfBaseName = sf.file_name.replace(/\.[^.]+$/, '').toLowerCase()
+          const sfSample = (sf.sample_name || '').toLowerCase().trim()
+          // 精确匹配 sample_name
+          if (ab1Sample && sfSample && ab1Sample === sfSample) {
+            bestMatch = sf; break
+          }
+          // 匹配文件名（去掉扩展名）
+          if (ab1BaseName && sfBaseName && ab1BaseName === sfBaseName) {
+            bestMatch = sf; break
+          }
+          // 模糊匹配：一个名称包含另一个
+          if (ab1Sample && sfSample && (ab1Sample.includes(sfSample) || sfSample.includes(ab1Sample))) {
+            bestMatch = sf; break
+          }
+          if (ab1BaseName && sfBaseName && (ab1BaseName.includes(sfBaseName) || sfBaseName.includes(ab1BaseName))) {
+            bestMatch = sf; break
+          }
+        }
+        if (bestMatch) {
+          result.reference_sequence = bestMatch.sequence
+          result.reference_source = bestMatch.file_name
+          console.log(`[SeqFile] Matched reference: ${bestMatch.file_name} (${bestMatch.sequence.length}bp)`)
+        }
+      } catch (e: any) { console.error('[SeqFile] Auto-match SEQ failed:', e.message) }
+    }
     return result
+  })
+
+  // ============ 基因序列文件导入 ============
+  ipcMain.handle(IPC_CHANNELS.GENE_IMPORT_FILE, async () => {
+    const result = await dialog.showOpenDialog({
+      properties: ['openFile', 'multiSelections'],
+      filters: [
+        { name: 'Sequence Files', extensions: ['gb', 'gbk', 'genbank', 'fasta', 'fa', 'fna'] },
+        { name: 'All Files', extensions: ['*'] }
+      ]
+    })
+    if (result.canceled || result.filePaths.length === 0) return { success: false, count: 0 }
+
+    let count = 0
+    for (const filePath of result.filePaths) {
+      try {
+        const ext = path.extname(filePath).toLowerCase()
+        const fileName = path.basename(filePath)
+        const nameWithoutExt = fileName.replace(/\.[^.]+$/, '')
+
+        if (['.gb', '.gbk', '.genbank'].includes(ext)) {
+          const content = readFileSync(filePath, 'utf-8')
+          const record = parseGenBank(content)
+          db.createGene({
+            gene_name: record.name || nameWithoutExt,
+            type: 'genomic',
+            species: '',
+            sequence: record.sequence || '',
+            accession_number: record.accession || '',
+            description: record.description || '',
+            features_json: JSON.stringify(record.features || []),
+            topology: record.topology || 'linear',
+            file_path: filePath
+          })
+          count++
+        } else if (['.fasta', '.fa', '.fna'].includes(ext)) {
+          const content = readFileSync(filePath, 'utf-8')
+          const records = parseFasta(content)
+          for (const rec of records) {
+            // 推断 type：检查是否含终止密码子或全是蛋白字符
+            const seq = rec.sequence.toUpperCase()
+            const isProtein = !/[^ACDEFGHIKLMNPQRSTVWY]/.test(seq) && /[KRHLY]/.test(seq)
+            db.createGene({
+              gene_name: rec.id || nameWithoutExt,
+              type: isProtein ? 'protein' : 'genomic',
+              species: '',
+              sequence: rec.sequence,
+              accession_number: '',
+              description: rec.description || '',
+              features_json: '[]',
+              topology: 'linear',
+              file_path: filePath
+            })
+            count++
+          }
+        }
+      } catch (e) {
+        console.error(`[GeneImport] Failed to import ${filePath}:`, e)
+      }
+    }
+    return { success: true, count }
+  })
+
+  // ============ 基因编辑器窗口 ============
+  ipcMain.handle(IPC_CHANNELS.GENE_EDITOR_OPEN, (_event, geneId: number) => {
+    createGeneEditorWindow(geneId)
+  })
+
+  ipcMain.handle(IPC_CHANNELS.GENE_EDITOR_GET_DATA, (_event, geneId: number) => {
+    const gene = db.getGene(geneId)
+    if (!gene) return null
+
+    let features: GenBankFeature[] = []
+    // 从 features_json 解析
+    if (gene.features_json) {
+      try { features = JSON.parse(gene.features_json) } catch { /* ignore */ }
+    }
+    // 如果有文件路径且 features 为空，尝试从文件解析
+    if (features.length === 0 && gene.file_path && existsSync(gene.file_path)) {
+      const ext = path.extname(gene.file_path).toLowerCase()
+      try {
+        if (['.gb', '.gbk', '.genbank'].includes(ext)) {
+          const content = readFileSync(gene.file_path, 'utf-8')
+          const record = parseGenBank(content)
+          features = record.features || []
+        } else if (ext === '.dna') {
+          const buffer = readFileSync(gene.file_path)
+          const record = parseSnapGene(buffer)
+          features = record.features || []
+        }
+      } catch (e) { console.error('[GeneEditor] Failed to parse file:', e) }
+    }
+    // 从 mRNA join() 推断 exon/intron（对已导入但缺少 exon/intron 的旧数据生效）
+    if (features.length > 0) {
+      const beforeCount = features.length
+      inferExonIntronFeatures(features)
+      if (features.length > beforeCount) {
+        console.log(`[GeneEditor] Inferred exon/intron: ${beforeCount} → ${features.length} features`)
+      }
+    }
+
+    return {
+      gene: { ...gene },
+      features,
+      topology: gene.topology || 'linear'
+    }
+  })
+
+  ipcMain.handle(IPC_CHANNELS.GENE_EDITOR_SAVE_SEQUENCE, (_event, geneId: number, sequence: string) => {
+    db.updateGene(geneId, { sequence })
+    return true
+  })
+
+  // ============ 实验室载体文件导入 ============
+  ipcMain.handle(IPC_CHANNELS.LAB_VECTOR_IMPORT_FILE, async () => {
+    const result = await dialog.showOpenDialog({
+      properties: ['openFile', 'multiSelections'],
+      filters: [
+        { name: 'Vector/Sequence Files', extensions: ['gb', 'gbk', 'genbank', 'fasta', 'fa', 'fna', 'dna'] },
+        { name: 'All Files', extensions: ['*'] }
+      ]
+    })
+    if (result.canceled || result.filePaths.length === 0) return { success: false, count: 0 }
+
+    const dataDir = path.join(app.getPath('userData'), 'data', 'vectors')
+    if (!existsSync(dataDir)) mkdirSync(dataDir, { recursive: true })
+
+    let count = 0
+    for (const filePath of result.filePaths) {
+      try {
+        const ext = path.extname(filePath).toLowerCase()
+        const fileName = path.basename(filePath)
+        const nameWithoutExt = fileName.replace(/\.[^.]+$/, '')
+        const destPath = path.join(dataDir, fileName)
+        copyFileSync(filePath, destPath)
+
+        let sequence = ''
+        let features: GenBankFeature[] = []
+        let topology: 'circular' | 'linear' = 'circular'
+        let description = ''
+        let accession = ''
+
+        if (ext === '.dna') {
+          const buffer = readFileSync(filePath)
+          const record = parseSnapGene(buffer)
+          sequence = record.sequence
+          features = record.features || []
+          topology = record.topology || 'circular'
+          description = record.description || ''
+        } else if (['.gb', '.gbk', '.genbank'].includes(ext)) {
+          const content = readFileSync(filePath, 'utf-8')
+          const record = parseGenBank(content)
+          sequence = record.sequence || ''
+          features = record.features || []
+          topology = record.topology || 'circular'
+          description = record.description || ''
+          accession = record.accession || ''
+        } else if (['.fasta', '.fa', '.fna'].includes(ext)) {
+          const content = readFileSync(filePath, 'utf-8')
+          const records = parseFasta(content)
+          if (records.length > 0) {
+            sequence = records[0].sequence
+            description = records[0].description || ''
+          }
+          topology = 'linear'
+        }
+
+        // 创建 vector 记录
+        const vectorId = db.createVector({
+          name: nameWithoutExt,
+          type: 'other',
+          size_bp: sequence.length,
+          description,
+          sequence,
+          backbone_id: null,
+          purpose: 'other',
+          host_type: 'ecoli',
+          promoter_type: 'none',
+          is_recombinant: false,
+          antibiotic_resistance: '',
+          copy_number: '',
+          file_path: destPath,
+          topology,
+          source_file: fileName
+        })
+
+        // 同时创建 lab_vector 记录
+        db.createLabVector({
+          vector_id: vectorId,
+          name: nameWithoutExt,
+          insert_gene_id: null,
+          empty_vector_id: null,
+          notes: `从文件导入: ${fileName}`
+        })
+
+        count++
+      } catch (e) {
+        console.error(`[LabVectorImport] Failed to import ${filePath}:`, e)
+      }
+    }
+    return { success: true, count }
   })
 }

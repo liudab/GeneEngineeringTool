@@ -298,6 +298,9 @@ export function parseGenBank(content: string): GenBankRecord {
     finalizeFeature(currentFeature, features)
   }
 
+  // 从 mRNA/CDS 的 join() 位置推断 exon 和 intron 特征
+  inferExonIntronFeatures(features)
+
   return {
     name,
     description,
@@ -351,6 +354,132 @@ function parseLocation(location: string): { start: number; end: number; strand: 
   }
 
   return { start: 0, end: 0, strand: 1 }
+}
+
+/**
+ * 从 mRNA/CDS 特征的 join() 位置推断 exon 和 intron 特征
+ * NCBI RefSeq GenBank 文件通常不包含显式的 exon/intron 特征，
+ * 而是将外显子段编码在 mRNA 的 join(start..end, start..end, ...) 中。
+ * 此函数自动从 join() 解析出各个外显子段，并将它们之间的间隔标注为内含子。
+ */
+export function inferExonIntronFeatures(features: GenBankFeature[]): void {
+  // 检查是否已有显式 exon/intron 特征
+  const hasExon = features.some(f => f.type === 'exon')
+  const hasIntron = features.some(f => f.type === 'intron')
+  if (hasExon && hasIntron) return
+
+  const newFeatures: GenBankFeature[] = []
+
+  // 优先使用 mRNA，如果存在 mRNA join() 则仅使用 mRNA（CDS exon 是 mRNA exon 的子集）
+  const hasMrnaJoin = features.some(f => f.type === 'mRNA' && f.location.includes('join('))
+  const sourceFeatures = hasMrnaJoin
+    ? features.filter(f => f.type === 'mRNA' && f.location.includes('join('))
+    : features.filter(f => f.type === 'CDS' && f.location.includes('join('))
+
+  // 记录已生成的 exon 位置，避免重复
+  const generatedExons = new Set<string>()
+
+  for (const feat of sourceFeatures) {
+    const segments = parseJoinSegments(feat.location)
+    if (segments.length < 2) continue
+
+    const geneName = feat.qualifiers.gene || feat.qualifiers.label || ''
+
+    for (let i = 0; i < segments.length; i++) {
+      const seg = segments[i]
+      const key = `${seg.start}-${seg.end}`
+
+      if (!hasExon && !generatedExons.has(key)) {
+        generatedExons.add(key)
+        const exonQualifiers: Record<string, string> = { gene: geneName }
+        if (feat.qualifiers.product) exonQualifiers.product = feat.qualifiers.product
+        if (feat.qualifiers.transcript_id) exonQualifiers.transcript_id = feat.qualifiers.transcript_id
+        exonQualifiers.note = `Exon ${i + 1} of ${segments.length}`
+
+        newFeatures.push({
+          type: 'exon',
+          location: feat.strand === -1
+            ? `complement(${seg.start + 1}..${seg.end + 1})`
+            : `${seg.start + 1}..${seg.end + 1}`,
+          start: seg.start,
+          end: seg.end,
+          strand: feat.strand,
+          qualifiers: exonQualifiers
+        })
+      }
+
+      // 生成 intron（当前段与下一段之间的间隔）
+      if (!hasIntron && i < segments.length - 1) {
+        const intronStart = seg.end + 1
+        const intronEnd = segments[i + 1].start - 1
+        if (intronEnd > intronStart) {
+          const intronQualifiers: Record<string, string> = { gene: geneName }
+          if (feat.qualifiers.product) intronQualifiers.product = feat.qualifiers.product
+          intronQualifiers.note = `Intron ${i + 1} of ${segments.length - 1}`
+
+          newFeatures.push({
+            type: 'intron',
+            location: feat.strand === -1
+              ? `complement(${intronStart + 1}..${intronEnd + 1})`
+              : `${intronStart + 1}..${intronEnd + 1}`,
+            start: intronStart,
+            end: intronEnd,
+            strand: feat.strand,
+            qualifiers: intronQualifiers
+          })
+        }
+      }
+    }
+  }
+
+  // 将推断的特征添加到列表
+  if (newFeatures.length > 0) {
+    features.push(...newFeatures)
+    console.log(`[GenBank] Inferred ${newFeatures.filter(f => f.type === 'exon').length} exons and ${newFeatures.filter(f => f.type === 'intron').length} introns from join() features`)
+  }
+}
+
+/**
+ * 解析 join() 位置字符串中的各个片段
+ * 输入: "complement(join(4001..4725,5561..5904,6073..6391))"
+ * 输出: [{start: 4000, end: 4724}, {start: 5560, end: 5903}, {start: 6072, end: 6390}]  (0-based)
+ */
+function parseJoinSegments(location: string): { start: number; end: number }[] {
+  let loc = location
+
+  // 去除 complement() 包装
+  if (loc.startsWith('complement(')) {
+    loc = loc.replace('complement(', '').replace(/\)$/, '')
+  }
+
+  // 去除 join() 包装
+  if (loc.startsWith('join(')) {
+    loc = loc.replace('join(', '').replace(/\)$/, '')
+  }
+
+  const parts = loc.split(',')
+  const segments: { start: number; end: number }[] = []
+
+  for (const part of parts) {
+    const cleaned = part.trim().replace(/[<>]/g, '')
+    const rangeMatch = cleaned.match(/(\d+)\.\.(\d+)/)
+    if (rangeMatch) {
+      segments.push({
+        start: parseInt(rangeMatch[1]) - 1,  // 1-based → 0-based
+        end: parseInt(rangeMatch[2]) - 1
+      })
+    } else {
+      const singleMatch = cleaned.match(/(\d+)/)
+      if (singleMatch) {
+        const pos = parseInt(singleMatch[1]) - 1
+        segments.push({ start: pos, end: pos })
+      }
+    }
+  }
+
+  // 按 start 升序排列
+  segments.sort((a, b) => a.start - b.start)
+  return segments
 }
 
 function finalizeFeature(partial: Partial<GenBankFeature>, features: GenBankFeature[]): void {

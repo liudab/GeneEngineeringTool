@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react'
-import { Search, Upload, Trash2, Edit2, X, FileText, ArrowRight, ArrowLeft } from 'lucide-react'
+import { Search, Upload, Trash2, Edit2, X, FileText, ArrowRight, ArrowLeft, Maximize2 } from 'lucide-react'
 import type { SequencingFile, SequencingDirection, Primer } from '../../shared/types'
 import { useI18n } from '../hooks/useI18n'
+import ChromatogramViewer from '../components/ChromatogramViewer/ChromatogramViewer'
 
 export default function SequencingFilePage() {
   const { t } = useI18n()
@@ -14,6 +15,12 @@ export default function SequencingFilePage() {
     sample_name: '', direction: 'forward' as SequencingDirection,
     primer_id: null as number | null, notes: ''
   })
+  const [traceData, setTraceData] = useState<any>(null)
+  const [peakPositions, setPeakPositions] = useState<number[]>([])
+  const [qualityValues, setQualityValues] = useState<number[]>([])
+  const [showFullScreen, setShowFullScreen] = useState(false)
+  const [referenceSequence, setReferenceSequence] = useState<string>('')
+  const [referenceSource, setReferenceSource] = useState<string>('')
 
   useEffect(() => { loadFiles() }, [])
 
@@ -44,6 +51,26 @@ export default function SequencingFilePage() {
 
   const handleSelect = async (f: SequencingFile) => {
     setSelected(f)
+    // 尝试加载色谱数据
+    setTraceData(null)
+    setPeakPositions([])
+    setQualityValues([])
+    setReferenceSequence('')
+    setReferenceSource('')
+    if (f.file_type === 'ab1' && f.id) {
+      try {
+        const data = await window.api.readSequencingFile(f.id)
+        if (data?.trace_data_parsed) {
+          setTraceData(data.trace_data_parsed)
+          setPeakPositions(data.peak_positions_parsed || [])
+          setQualityValues(data.quality_values_parsed || [])
+        }
+        if (data?.reference_sequence) {
+          setReferenceSequence(data.reference_sequence)
+          setReferenceSource(data.reference_source || '')
+        }
+      } catch (e) { console.error('[SeqFile] Failed to load trace data:', e) }
+    }
   }
 
   const handleEdit = (f: SequencingFile) => {
@@ -192,6 +219,35 @@ export default function SequencingFilePage() {
                   <div className="text-[10px] text-slate-400 mt-1">{selected.sequence.length} bp</div>
                 </div>
               )}
+              {/* AB1 色谱峰图 */}
+              {selected.file_type === 'ab1' && (
+                <div className="col-span-2 bg-white rounded-lg border border-slate-200 p-3">
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="text-xs font-medium text-slate-600">{t('seq.chromatogram')}</div>
+                    {traceData && (
+                      <button onClick={() => setShowFullScreen(true)} className="p-1 text-slate-400 hover:text-slate-600 rounded hover:bg-slate-100" title={t('seq.fullScreen')}>
+                        <Maximize2 size={14} />
+                      </button>
+                    )}
+                  </div>
+                  {traceData ? (
+                    <ChromatogramViewer
+                      traces={traceData.traces || traceData}
+                      peakPositions={peakPositions}
+                      sequence={selected.sequence || ''}
+                      qualityValues={qualityValues}
+                      referenceSequence={referenceSequence || undefined}
+                      referenceSource={referenceSource || undefined}
+                      height={280}
+                    />
+                  ) : (
+                    <div className="flex flex-col items-center justify-center py-8 text-slate-400">
+                      <FileText size={24} className="mb-2" />
+                      <p className="text-xs">{t('seq.noTraceData')}</p>
+                    </div>
+                  )}
+                </div>
+              )}
               {selected.run_info && (
                 <div className="bg-slate-50 rounded p-3 col-span-2">
                   <div className="text-xs text-slate-500 mb-1">{t('seq.runInfo')}</div>
@@ -221,6 +277,32 @@ export default function SequencingFilePage() {
           </div>
         )}
       </div>
+
+      {/* 全屏峰图弹窗 */}
+      {showFullScreen && traceData && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg shadow-xl w-[95vw] h-[90vh] flex flex-col p-4">
+            <div className="flex items-center justify-between mb-3">
+              <div className="text-sm font-medium text-slate-700">
+                {t('seq.chromatogram')} — {selected?.sample_name || selected?.file_name}
+              </div>
+              <button onClick={() => setShowFullScreen(false)} className="p-1.5 text-slate-400 hover:text-slate-600 rounded hover:bg-slate-100">
+                <X size={18} />
+              </button>
+            </div>
+            <div className="flex-1 min-h-0">
+              <ChromatogramViewer
+                traces={traceData.traces || traceData}
+                peakPositions={peakPositions}
+                sequence={selected?.sequence || ''}
+                qualityValues={qualityValues}
+                referenceSequence={referenceSequence || undefined}
+                referenceSource={referenceSource || undefined}
+              />
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* 编辑弹窗 */}
       {showEdit && (

@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Search, Plus, Trash2, Edit2, X, Link2 } from 'lucide-react'
+import { Search, Plus, Trash2, Edit2, X, Link2, Upload, Map } from 'lucide-react'
 import type { GeneSequence, GeneSequenceType } from '../../shared/types'
 
 const tabs: { id: GeneSequenceType | 'all'; label: string; color: string }[] = [
@@ -21,6 +21,17 @@ export default function GenePage() {
   const [formData, setFormData] = useState({
     gene_name: '', type: 'mrna' as GeneSequenceType, species: '', sequence: '', accession_number: '', description: ''
   })
+
+  const [importMsg, setImportMsg] = useState('')
+
+  const handleImport = async () => {
+    const result = await window.api.importGeneFiles()
+    if (result?.success && result.count > 0) {
+      setImportMsg(`成功导入 ${result.count} 个序列`)
+      loadGenes()
+      setTimeout(() => setImportMsg(''), 3000)
+    }
+  }
 
   useEffect(() => { loadGenes() }, [activeTab])
 
@@ -103,6 +114,9 @@ export default function GenePage() {
           <button onClick={handleCreate} className="px-3 py-2 bg-green-600 text-white rounded-lg text-sm hover:bg-green-500 flex items-center gap-1">
             <Plus size={16} /> 添加
           </button>
+          <button onClick={handleImport} className="px-3 py-2 bg-orange-500 text-white rounded-lg text-sm hover:bg-orange-400 flex items-center gap-1" title="导入 GenBank/FASTA 文件">
+            <Upload size={16} /> 导入
+          </button>
         </div>
 
         <div className="flex-1 overflow-auto bg-white rounded-lg border border-slate-200">
@@ -129,6 +143,7 @@ export default function GenePage() {
                   <td className="px-4 py-2 text-slate-500 text-xs font-mono">{g.accession_number || '-'}</td>
                   <td className="px-4 py-2 text-slate-600">{g.sequence.length.toLocaleString()} {g.type === 'protein' ? 'aa' : 'bp'}</td>
                   <td className="px-4 py-2 text-right">
+                    <button onClick={(e) => { e.stopPropagation(); window.api.openGeneEditor(g.id) }} className="p-1 text-slate-400 hover:text-violet-600" title="查看图谱"><Map size={14} /></button>
                     <button onClick={(e) => { e.stopPropagation(); handleEdit(g) }} className="p-1 text-slate-400 hover:text-blue-600"><Edit2 size={14} /></button>
                     <button onClick={(e) => { e.stopPropagation(); handleDelete(g.id) }} className="p-1 text-slate-400 hover:text-red-600 ml-1"><Trash2 size={14} /></button>
                   </td>
@@ -138,14 +153,19 @@ export default function GenePage() {
           </table>
           {genes.length === 0 && <div className="text-center py-12 text-slate-400">暂无数据</div>}
         </div>
-        <div className="text-xs text-slate-400 mt-2">共 {genes.length} 条记录</div>
+        <div className="text-xs text-slate-400 mt-2">共 {genes.length} 条记录 {importMsg && <span className="text-green-600 ml-2">{importMsg}</span>}</div>
       </div>
 
       {selectedGene && (
         <div className="w-80 bg-white rounded-lg border border-slate-200 p-5 flex-shrink-0 overflow-auto">
           <div className="flex items-center justify-between mb-4">
             <h3 className="text-lg font-bold text-slate-800">{selectedGene.gene_name}</h3>
-            <button onClick={() => setSelectedGene(null)} className="p-1 text-slate-400 hover:text-slate-600"><X size={16} /></button>
+            <div className="flex items-center gap-2">
+              <button onClick={() => window.api.openGeneEditor(selectedGene.id)} className="px-2 py-1 bg-pink-600 text-white rounded text-xs flex items-center gap-1 hover:bg-pink-500" title="查看图谱">
+                <Map size={12} /> 图谱
+              </button>
+              <button onClick={() => setSelectedGene(null)} className="p-1 text-slate-400 hover:text-slate-600"><X size={16} /></button>
+            </div>
           </div>
           <div className="space-y-3">
             <div><label className="text-xs font-medium text-slate-500 uppercase">类型</label>

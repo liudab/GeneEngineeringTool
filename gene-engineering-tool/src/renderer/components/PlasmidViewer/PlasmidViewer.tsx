@@ -22,7 +22,17 @@ const FEATURE_COLORS: Record<string, string> = {
   intron: '#a3a3a3',
   five_prime_UTR: '#84cc16',
   three_prime_UTR: '#e879f9',
-  enhancer: '#fbbf24'
+  enhancer: '#fbbf24',
+  sig_peptide: '#f97316',
+  polyA_signal: '#eab308',
+  STS: '#64748b',
+  ncRNA: '#06b6d4',
+  misc_RNA: '#06b6d4',
+  misc_binding: '#64748b',
+  misc_difference: '#94a3b8',
+  misc_recomb: '#8b5cf6',
+  ori: '#8b5cf6',
+  antibiotic_resistance: '#ef4444'
 }
 
 function getColor(type: string): string {

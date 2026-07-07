@@ -1,5 +1,5 @@
 import { useState, useRef, useMemo, useCallback, useEffect, useLayoutEffect } from 'react'
-import { Search, Copy, Clipboard, Bookmark, ArrowUp, ArrowDown, Undo2, Redo2, ChevronDown, X } from 'lucide-react'
+import { Search, Copy, Clipboard, Bookmark, ArrowUp, ArrowDown, Undo2, Redo2, ChevronDown, X, AlignLeft, FlaskConical } from 'lucide-react'
 import type { GenBankFeature } from '../../shared/types'
 
 interface EnzymeSiteInfo {
@@ -43,13 +43,22 @@ interface Props {
   onClearMapSelection: () => void
   onSelectionChange?: (sel: { start: number; end: number } | null, insertPos: number | null) => void
   onHoverPosition?: (pos: number | null) => void
+  /** 比对选区回调（传入时显示比对按钮） */
+  onAlignSelection?: () => void
+  /** 设计引物回调（传入时显示设计引物按钮） */
+  onDesignPrimers?: () => void
 }
 
 const FEATURE_COLORS: Record<string, string> = {
   gene: '#10b981', CDS: '#3b82f6', mRNA: '#06b6d4', promoter: '#f59e0b',
   terminator: '#ef4444', rep_origin: '#8b5cf6', misc_feature: '#94a3b8',
   primer_bind: '#ec4899', protein_bind: '#6366f1', regulatory: '#f97316',
-  enhancer: '#fbbf24', exon: '#14b8a6'
+  enhancer: '#fbbf24', exon: '#14b8a6', intron: '#a3a3a3',
+  five_prime_UTR: '#84cc16', three_prime_UTR: '#e879f9',
+  sig_peptide: '#f97316', polyA_signal: '#eab308',
+  STS: '#64748b', ncRNA: '#06b6d4', misc_RNA: '#06b6d4',
+  misc_binding: '#64748b', misc_difference: '#94a3b8',
+  misc_recomb: '#8b5cf6', source: '#9ca3af'
 }
 function getColor(t: string): string { return FEATURE_COLORS[t] || '#cbd5e1' }
 
@@ -129,7 +138,7 @@ function computePrimerLanes(sites: PrimerSiteInfo[]): Map<number, number> {
 export default function SequenceEditor({
   sequence, features, enzymeSites, primerSites = [], onSequenceChange, onAddFeature,
   selectedFeature, onSelectFeature, hoveredFeature, mapSelection, onClearMapSelection,
-  onSelectionChange, onHoverPosition
+  onSelectionChange, onHoverPosition, onAlignSelection, onDesignPrimers
 }: Props) {
   const seqRef = useRef<HTMLDivElement>(null)
   const [lineWidth, setLineWidth] = useState(60)
@@ -471,6 +480,18 @@ export default function SequenceEditor({
           className="px-2 py-1 text-xs text-red-600 border border-red-200 rounded flex items-center gap-1 hover:bg-red-50 disabled:opacity-30"><X size={12} /> 删除</button>
         <button onClick={openMarkDialog} disabled={!hasSelection}
           className="px-2 py-1 text-xs text-emerald-600 border border-emerald-200 rounded flex items-center gap-1 hover:bg-emerald-50 disabled:opacity-30"><Bookmark size={12} /> 标记元件</button>
+        {onAlignSelection && (
+          <button onClick={onAlignSelection} disabled={!hasSelection}
+            className="px-2 py-1 text-xs text-blue-600 border border-blue-200 rounded flex items-center gap-1 hover:bg-blue-50 disabled:opacity-30">
+            <AlignLeft size={12} /> 序列比对
+          </button>
+        )}
+        {onDesignPrimers && (
+          <button onClick={onDesignPrimers} disabled={!hasSelection}
+            className="px-2 py-1 text-xs text-violet-600 border border-violet-200 rounded flex items-center gap-1 hover:bg-violet-50 disabled:opacity-30">
+            <FlaskConical size={12} /> 设计引物
+          </button>
+        )}
         <div className="flex-1" />
         <span className="text-[10px] text-slate-400">每行 {lineWidth} bp | 共 {sequence.length.toLocaleString()} bp</span>
         {hasSelection && <span className="text-[10px] text-blue-500">选中: {selLo + 1}..{selHi + 1} ({selHi - selLo + 1} bp)</span>}

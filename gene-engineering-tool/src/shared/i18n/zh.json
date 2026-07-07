@@ -215,5 +215,14 @@
   "seq.createdAt": "创建时间",
   "seq.updatedAt": "更新时间",
   "seq.selectFile": "选择一个测序文件查看详情",
-  "seq.editFile": "编辑测序文件"
+  "seq.editFile": "编辑测序文件",
+  "seq.chromatogram": "色谱峰图",
+  "seq.fullScreen": "全屏查看",
+  "seq.noTraceData": "暂无色谱 trace 数据，可能文件导入时解析失败",
+  "seq.refMatched": "已匹配参考序列",
+  "seq.mismatches": "错配",
+  "seq.ab1Sequence": "AB1 识别序列",
+
+  "editor.alignSequence": "序列比对",
+  "editor.designPrimers": "设计引物"
 }

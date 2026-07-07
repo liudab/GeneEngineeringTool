@@ -152,6 +152,11 @@ function createTables(): void {
   db.run('CREATE INDEX IF NOT EXISTS idx_gene_type ON gene_sequences(type)')
   db.run('CREATE INDEX IF NOT EXISTS idx_lab_vector_name ON lab_vectors(name)')
 
+  // 迁移：gene_sequences 新字段（兼容已有数据库）
+  try { db.run('ALTER TABLE gene_sequences ADD COLUMN features_json TEXT DEFAULT \'[]\'') } catch (_e) { /* 列已存在 */ }
+  try { db.run('ALTER TABLE gene_sequences ADD COLUMN topology TEXT DEFAULT \'linear\'') } catch (_e) { /* 列已存在 */ }
+  try { db.run('ALTER TABLE gene_sequences ADD COLUMN file_path TEXT DEFAULT \'\'') } catch (_e) { /* 列已存在 */ }
+
   // 引物表
   db.run(`
     CREATE TABLE IF NOT EXISTS primers (
@@ -372,8 +377,9 @@ export function searchGenes(query: string, type?: GeneSequenceType): GeneSequenc
 
 export function createGene(data: Omit<GeneSequence, 'id'>): number {
   run(
-    'INSERT INTO gene_sequences (gene_name, type, species, sequence, accession_number, description) VALUES (?, ?, ?, ?, ?, ?)',
-    [data.gene_name, data.type, data.species, data.sequence, data.accession_number, data.description]
+    'INSERT INTO gene_sequences (gene_name, type, species, sequence, accession_number, description, features_json, topology, file_path) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    [data.gene_name, data.type, data.species, data.sequence, data.accession_number, data.description,
+     data.features_json || '[]', data.topology || 'linear', data.file_path || '']
   )
   return lastInsertId()
 }
@@ -387,6 +393,9 @@ export function updateGene(id: number, data: Partial<GeneSequence>): void {
   if (data.sequence !== undefined) { fields.push('sequence = ?'); values.push(data.sequence) }
   if (data.accession_number !== undefined) { fields.push('accession_number = ?'); values.push(data.accession_number) }
   if (data.description !== undefined) { fields.push('description = ?'); values.push(data.description) }
+  if (data.features_json !== undefined) { fields.push('features_json = ?'); values.push(data.features_json) }
+  if (data.topology !== undefined) { fields.push('topology = ?'); values.push(data.topology) }
+  if (data.file_path !== undefined) { fields.push('file_path = ?'); values.push(data.file_path) }
   if (fields.length === 0) return
   values.push(id)
   run(`UPDATE gene_sequences SET ${fields.join(', ')} WHERE id = ?`, values)

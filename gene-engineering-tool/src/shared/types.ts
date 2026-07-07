@@ -61,6 +61,9 @@ export interface GeneSequence {
   sequence: string
   accession_number: string
   description: string
+  features_json?: string          // JSON 序列化的 GenBankFeature[]
+  topology?: 'circular' | 'linear'
+  file_path?: string
 }
 
 export interface GeneRelation {
@@ -267,5 +270,16 @@ export const IPC_CHANNELS = {
   SEQUENCING_FILE_DELETE: 'db:sequencing:delete',
   SEQUENCING_FILE_SEARCH: 'db:sequencing:search',
   SEQUENCING_FILE_IMPORT: 'db:sequencing:import',
-  SEQUENCING_FILE_READ: 'db:sequencing:read'
+  SEQUENCING_FILE_READ: 'db:sequencing:read',
+
+  // 基因序列文件导入
+  GENE_IMPORT_FILE: 'db:gene:import-file',
+
+  // 基因编辑器窗口
+  GENE_EDITOR_OPEN: 'gene-editor:open',
+  GENE_EDITOR_GET_DATA: 'gene-editor:get-data',
+  GENE_EDITOR_SAVE_SEQUENCE: 'gene-editor:save-sequence',
+
+  // 实验室载体文件导入
+  LAB_VECTOR_IMPORT_FILE: 'db:lab-vector:import-file'
 } as const
