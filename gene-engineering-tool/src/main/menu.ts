@@ -15,6 +15,25 @@ export function buildMenu(): void {
           accelerator: 'CmdOrCtrl+O',
           click: () => sendToFocused('open-file')
         },
+        {
+          label: '打开蛋白质序列',
+          click: async () => {
+            const { dialog: dlg } = require('electron')
+            const { readFileSync: rfs } = require('fs')
+            const result = await dlg.showOpenDialog({ title: '导入蛋白质序列', filters: [{ name: 'FASTA', extensions: ['fasta', 'fa', 'faa'] }, { name: '所有文件', extensions: ['*'] }], properties: ['openFile'] })
+            if (result.canceled || result.filePaths.length === 0) return
+            const content = rfs(result.filePaths[0], 'utf-8')
+            const lines = content.split('\n')
+            let name = '', sequence = ''
+            for (const line of lines) {
+              if (line.startsWith('>')) { if (sequence) break; name = line.substring(1).trim().split(/\s/)[0] || 'protein' }
+              else { sequence += line.trim() }
+            }
+            if (!sequence) return
+            const { createProteinEditorWindow } = require('./index')
+            createProteinEditorWindow(name || 'protein', sequence)
+          }
+        },
         { type: 'separator' },
         {
           label: t('menu.file.saveAs'),
@@ -67,7 +86,17 @@ export function buildMenu(): void {
         { type: 'separator' },
         { label: t('menu.view.zoomIn'), accelerator: 'CmdOrCtrl+=', click: () => sendToFocused('zoom-in') },
         { label: t('menu.view.zoomOut'), accelerator: 'CmdOrCtrl+-', click: () => sendToFocused('zoom-out') },
-        { label: t('menu.view.zoomReset'), accelerator: 'CmdOrCtrl+0', click: () => sendToFocused('zoom-reset') }
+        { label: t('menu.view.zoomReset'), accelerator: 'CmdOrCtrl+0', click: () => sendToFocused('zoom-reset') },
+        { type: 'separator' },
+        {
+          label: '开发者工具',
+          submenu: [
+            { label: '切换 DevTools', accelerator: 'CmdOrCtrl+Shift+I', role: 'toggleDevTools' },
+            { label: '诊断面板', accelerator: 'CmdOrCtrl+Shift+D', click: () => sendToFocused('toggle-debug-panel') },
+            { type: 'separator' },
+            { label: '打开日志目录', click: () => { const { getLogDir } = require('./logger'); const { shell } = require('electron'); shell.openPath(getLogDir()) } },
+          ]
+        }
       ]
     },
     {
@@ -107,7 +136,7 @@ export function buildMenu(): void {
               dialog.showMessageBox(win, {
                 type: 'info',
                 title: t('about.title'),
-                message: t('about.description')
+                message: `${t('about.softwareName')}\n${t('about.version')}\n\n${t('about.author')}\n${t('about.email')}\n\n${t('about.copyright')}\n${t('about.license')}\n${t('about.internalNote')}`,
               })
             }
           }

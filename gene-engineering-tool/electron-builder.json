@@ -1,21 +1,53 @@
 {
   "$schema": "https://raw.githubusercontent.com/electron-userland/electron-builder/master/packages/app-builder-lib/scheme.json",
-  "appId": "com.gene-engineering.assistant",
-  "productName": "基因工程辅助软件",
+  "appId": "com.bohanlab.helixcraft",
+  "productName": "HelixCraft",
   "directories": {
     "output": "dist"
   },
   "files": [
     "out/**/*",
-    "!node_modules/**/*"
+    "node_modules/**/*"
+  ],
+  "asarUnpack": [
+    "node_modules/sql.js/dist/sql-wasm.wasm"
   ],
   "extraResources": [
     {
       "from": "data",
       "to": "data"
+    },
+    {
+      "from": "plugins/species-rice",
+      "to": "plugins/species-rice"
     }
   ],
   "win": {
-    "target": "nsis"
+    "icon": "icon.ico",
+    "target": [
+      {
+        "target": "nsis",
+        "arch": ["x64"]
+      }
+    ],
+    "signAndEditExecutable": false
+  },
+  "nsis": {
+    "oneClick": false,
+    "perMachine": true,
+    "allowElevation": true,
+    "allowToChangeInstallationDirectory": true,
+    "runAfterFinish": true,
+    "createDesktopShortcut": true,
+    "createStartMenuShortcut": true,
+    "shortcutName": "HelixCraft",
+    "installerIcon": "icon.ico",
+    "uninstallerIcon": "icon.ico",
+    "installerHeaderIcon": "icon.ico",
+    "unicode": true,
+    "language": "2052",
+    "menuCategory": false,
+    "displayLanguageSelector": false,
+    "include": "build/nsis-custom.nsh"
   }
 }

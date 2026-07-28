@@ -2,10 +2,14 @@ import { useState, useEffect } from 'react'
 import { Search, Plus, Trash2, Edit2, X, Upload, Dna, Link2, FlaskConical } from 'lucide-react'
 import type { Primer, PrimerCategory, PrimerAlignmentHit } from '../../shared/types'
 import { useI18n } from '../hooks/useI18n'
+import { useLifecycleLog, useModuleLogger } from '../hooks/useDebugLog'
 
 type TabId = 'all' | 'universal' | 'lab'
 
 export default function PrimerPage() {
+  useLifecycleLog('PrimerPage')
+  const log = useModuleLogger('PrimerPage')
+
   const { t } = useI18n()
   const [primers, setPrimers] = useState<Primer[]>([])
   const [activeTab, setActiveTab] = useState<TabId>('all')
@@ -30,8 +34,14 @@ export default function PrimerPage() {
 
   const loadPrimers = async () => {
     const cat = activeTab === 'all' ? undefined : activeTab
-    const data = await window.api.getPrimers(cat)
-    setPrimers(data)
+    log.info(`Loading primers (category=${cat || 'all'})...`)
+    try {
+      const data = await window.api.getPrimers(cat)
+      log.info(`Loaded ${data.length} primers`)
+      setPrimers(data)
+    } catch (err) {
+      log.error('Failed to load primers', err)
+    }
   }
 
   const handleSearch = async () => {
@@ -43,6 +53,7 @@ export default function PrimerPage() {
 
   const handleDelete = async (id: number) => {
     if (!confirm(t('dialog.confirmDelete'))) return
+    log.info(`Deleting primer id=${id}`)
     await window.api.deletePrimer(id)
     loadPrimers()
     if (selected?.id === id) { setSelected(null); setAlignmentHits([]) }
@@ -93,8 +104,10 @@ export default function PrimerPage() {
   }
 
   const handleImportXlsx = async () => {
+    log.info('Importing primers from XLSX...')
     const count = await window.api.importPrimersFromXlsx()
     if (count > 0) {
+      log.info(`Imported ${count} primers from XLSX`)
       alert(`${t('primer.imported')}${count}${t('primer.primers')}`)
       loadPrimers()
     } else {

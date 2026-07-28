@@ -6,6 +6,9 @@
 
 import type { AlignmentParams, AlignmentResult } from './types'
 import { getScore, isSimilarAA } from './scoring'
+import { createLogger } from '../../utils/logger'
+
+const log = createLogger('SmithWaterman')
 
 /**
  * Smith-Waterman 局部比对
@@ -17,6 +20,7 @@ export function smithWaterman(
   isProtein: boolean = false,
   topK: number = 1
 ): AlignmentResult[] {
+  log.info(`Starting SW alignment: seq1(${seq1.length}) vs seq2(${seq2.length}), isProtein=${isProtein}, topK=${topK}`)
   const n = seq1.length
   const m = seq2.length
   const { gapOpen, gapExtend } = params
@@ -81,6 +85,7 @@ export function smithWaterman(
     if (result) results.push(result)
   }
 
+  log.debug(`SW alignment complete: found ${results.length} alignment(s)`)
   return results
 }
 

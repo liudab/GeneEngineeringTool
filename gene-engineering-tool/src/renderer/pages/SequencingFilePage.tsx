@@ -1,10 +1,14 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { Search, Upload, Trash2, Edit2, X, FileText, ArrowRight, ArrowLeft, Maximize2 } from 'lucide-react'
 import type { SequencingFile, SequencingDirection, Primer } from '../../shared/types'
 import { useI18n } from '../hooks/useI18n'
+import { useLifecycleLog, useModuleLogger } from '../hooks/useDebugLog'
 import ChromatogramViewer from '../components/ChromatogramViewer/ChromatogramViewer'
 
 export default function SequencingFilePage() {
+  useLifecycleLog('SequencingFilePage')
+  const log = useModuleLogger('SequencingFilePage')
+
   const { t } = useI18n()
   const [files, setFiles] = useState<SequencingFile[]>([])
   const [selected, setSelected] = useState<SequencingFile | null>(null)
@@ -21,29 +25,58 @@ export default function SequencingFilePage() {
   const [showFullScreen, setShowFullScreen] = useState(false)
   const [referenceSequence, setReferenceSequence] = useState<string>('')
   const [referenceSource, setReferenceSource] = useState<string>('')
+  const fullscreenRef = useRef<HTMLDivElement>(null)
+  const [fullscreenH, setFullscreenH] = useState(600)
 
   useEffect(() => { loadFiles() }, [])
 
+  // 全屏峰图自适应高度
+  useEffect(() => {
+    if (!showFullScreen) return
+    const el = fullscreenRef.current
+    if (!el) return
+    const obs = new ResizeObserver(entries => {
+      for (const entry of entries) {
+        const h = entry.contentRect.height
+        if (h > 100) setFullscreenH(h - 8)
+      }
+    })
+    obs.observe(el)
+    setFullscreenH(el.clientHeight - 8)
+    return () => obs.disconnect()
+  }, [showFullScreen])
+
   const loadFiles = async () => {
-    const data = await window.api.getSequencingFiles()
-    setFiles(data)
+    log.info('Loading sequencing files...')
+    try {
+      const data = await window.api.getSequencingFiles()
+      log.info(`Loaded ${data.length} sequencing files`)
+      setFiles(data)
+    } catch (err) {
+      log.error('Failed to load sequencing files', err)
+    }
   }
 
   const handleSearch = async () => {
     if (!searchQuery.trim()) { loadFiles(); return }
+    console.log(`[SeqFilePage] Searching: "${searchQuery}"`)
     const data = await window.api.searchSequencingFiles(searchQuery)
+    console.log(`[SeqFilePage] Search results: ${data.length}`)
     setFiles(data)
   }
 
   const handleImport = async () => {
+    log.info('Importing sequencing files...')
     const result = await window.api.importSequencingFiles()
     if (result?.success && result.count > 0) {
+      log.info(`Imported ${result.count} files`)
       loadFiles()
     }
   }
 
   const handleDelete = async (id: number) => {
     if (!confirm(t('dialog.confirmDelete'))) return
+    log.info(`Deleting sequencing file id=${id}`)
     await window.api.deleteSequencingFile(id)
     loadFiles()
     if (selected?.id === id) setSelected(null)
@@ -65,11 +98,15 @@ export default function SequencingFilePage() {
           setPeakPositions(data.peak_positions_parsed || [])
           setQualityValues(data.quality_values_parsed || [])
         }
+        // 如果后端推导/返回了序列，更新 selected 对象
+        if (data?.sequence && !f.sequence) {
+          setSelected({ ...f, sequence: data.sequence })
+        }
         if (data?.reference_sequence) {
           setReferenceSequence(data.reference_sequence)
           setReferenceSource(data.reference_source || '')
         }
-      } catch (e) { console.error('[SeqFile] Failed to load trace data:', e) }
+      } catch (e) { log.error('Failed to load trace data', e) }
     }
   }
 
@@ -238,7 +275,7 @@ export default function SequencingFilePage() {
                       qualityValues={qualityValues}
                       referenceSequence={referenceSequence || undefined}
                       referenceSource={referenceSource || undefined}
-                      height={280}
+                      height={320}
                     />
                   ) : (
                     <div className="flex flex-col items-center justify-center py-8 text-slate-400">
@@ -290,7 +327,7 @@ export default function SequencingFilePage() {
                 <X size={18} />
               </button>
             </div>
-            <div className="flex-1 min-h-0">
+            <div ref={fullscreenRef} className="flex-1 min-h-0">
               <ChromatogramViewer
                 traces={traceData.traces || traceData}
                 peakPositions={peakPositions}
@@ -298,6 +335,7 @@ export default function SequencingFilePage() {
                 qualityValues={qualityValues}
                 referenceSequence={referenceSequence || undefined}
                 referenceSource={referenceSource || undefined}
+                height={fullscreenH}
               />
             </div>
           </div>

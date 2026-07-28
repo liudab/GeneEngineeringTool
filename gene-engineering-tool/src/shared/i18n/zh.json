@@ -1,5 +1,5 @@
 {
-  "app.title": "基因工程辅助软件",
+  "app.title": "HelixCraft",
 
   "nav.enzymes": "内切酶库",
   "nav.vectors": "载体数据库",
@@ -61,6 +61,7 @@
   "editor.uniqueEnzymesOnly": "仅唯一酶切位点",
   "editor.styleSettings": "图示设置",
   "editor.enzymeSettings": "酶切位点显示设置",
+  "editor.smartAnnotate": "智能标注元件",
   "editor.scanPrimers": "比对通用引物",
   "editor.noSequence": "载体没有序列，请先导入序列",
   "editor.noPrimerMatch": "未找到匹配的通用引物",
@@ -144,8 +145,17 @@
   "dialog.save": "保存",
   "dialog.confirmDelete": "确定删除？",
 
-  "about.title": "关于",
-  "about.description": "基因工程辅助软件 v0.1.0",
+  "about.title": "关于 HelixCraft",
+  "about.description": "HelixCraft v0.1.0 - 基因工程辅助软件",
+
+  "about.softwareName": "HelixCraft",
+  "about.version": "内部测试 v0.1.0（请勿传播）",
+  "about.author": "刘伯涵 @ BohanLab",
+  "about.email": "liubohan@hunau.edu.cn",
+  "about.copyright": "本软件版权均属作者所有（© 刘伯涵），保留所有权利",
+  "about.license": "仅供学术研究与教育用途，严禁任何形式的商业使用",
+  "about.internalNote": "当前版本为内部测试版，请勿外传",
+  "about.businessContact": "如有商业合作或投资意向，请联系作者邮箱",
 
   "featureType.gene": "基因",
   "featureType.CDS": "编码序列",
@@ -160,6 +170,8 @@
   "featureType.enhancer": "增强子",
   "featureType.exon": "外显子",
   "featureType.intron": "内含子",
+  "featureType.five_prime_UTR": "5'非翻译区",
+  "featureType.three_prime_UTR": "3'非翻译区",
   "featureType.sig_peptide": "信号肽",
   "featureType.polyA_signal": "多聚腺苷酸信号",
   "featureType.source": "来源",
@@ -224,5 +236,13 @@
   "seq.ab1Sequence": "AB1 识别序列",
 
   "editor.alignSequence": "序列比对",
-  "editor.designPrimers": "设计引物"
+  "editor.designPrimers": "设计引物",
+  "editor.primerScan": "引物扫描",
+  "editor.pairwiseAlign": "双序列比对",
+  "editor.basicCloning": "基础克隆",
+  "editor.advancedCloning": "高级克隆",
+  "editor.digestSim": "酶切模拟",
+  "editor.proteinAnalysis": "蛋白分析",
+  "editor.msa": "多序列比对",
+  "editor.markSelection": "标记选区"
 }

@@ -19,6 +19,11 @@
  *         而不是通过 dataHandle 指向的外部偏移。
  */
 
+import { callBases } from './base-caller'
+import { createLogger } from './logger'
+
+const log = createLogger('AB1Parser')
+
 export interface Ab1TraceData {
   /** 碱基序列 (base-called) */
   sequence: string
@@ -78,11 +83,11 @@ export function parseAb1(buffer: Buffer): Ab1TraceData {
   }
 
   const version = buffer.readInt16BE(4)
-  console.log(`[AB1] File version: ${version}, size: ${buffer.length} bytes`)
+  log.info(`File version: ${version}, size: ${buffer.length} bytes`)
 
   // 读取根目录入口 (offset 6, 28 bytes)
   const rootEntry = readDirectoryEntry(buffer, 6)
-  console.log(`[AB1] Root entry: tag="${rootEntry.tagName}", num=${rootEntry.tagNumber}, type=${rootEntry.elementType}, elemSize=${rootEntry.elementSize}, numElem=${rootEntry.numElements}, dataSize=${rootEntry.dataSize}, offset=${rootEntry.dataOffset}`)
+  log.debug(`Root entry: tag="${rootEntry.tagName}", num=${rootEntry.tagNumber}, type=${rootEntry.elementType}, elemSize=${rootEntry.elementSize}, numElem=${rootEntry.numElements}, dataSize=${rootEntry.dataSize}, offset=${rootEntry.dataOffset}`)
 
   // 根目录验证（更宽松）
   if (rootEntry.numElements <= 0) {
@@ -101,7 +106,7 @@ export function parseAb1(buffer: Buffer): Ab1TraceData {
   for (let i = 0; i < rootEntry.numElements; i++) {
     const entryOffset = rootEntry.dataOffset + i * DIR_ENTRY_SIZE
     if (entryOffset + DIR_ENTRY_SIZE > buffer.length) {
-      console.log(`[AB1] Directory entry ${i} out of bounds at offset ${entryOffset}, stopping`)
+      log.warn(`Directory entry ${i} out of bounds at offset ${entryOffset}, stopping`)
       break
     }
     const entry = readDirectoryEntry(buffer, entryOffset)
@@ -111,14 +116,14 @@ export function parseAb1(buffer: Buffer): Ab1TraceData {
     directory.set(key, entry)
   }
 
-  console.log(`[AB1] Parsed ${directory.size} directory entries`)
+  log.debug(`Parsed ${directory.size} directory entries`)
 
   // 打印所有目录条目（调试用）
   const allKeys = Array.from(directory.keys()).sort()
   for (const key of allKeys) {
     const e = directory.get(key)!
     const inline = e.dataSize <= 4 ? ' [inline]' : ''
-    console.log(`[AB1]   ${key}: type=${e.elementType}, elemSize=${e.elementSize}, numElem=${e.numElements}, dataSize=${e.dataSize}, offset=${e.dataOffset}${inline}`)
+    log.debug(`  ${key}: type=${e.elementType}, elemSize=${e.elementSize}, numElem=${e.numElements}, dataSize=${e.dataSize}, offset=${e.dataOffset}${inline}`)
   }
 
   // 提取序列 (PBAS.2 或 PBAS.1)
@@ -144,12 +149,22 @@ export function parseAb1(buffer: Buffer): Ab1TraceData {
 
   // 确定通道到碱基的映射 (FWO_ 标签)
   const baseMapping = getBaseMapping(directory, buffer)
-  console.log(`[AB1] Base mapping (filter wheel order): ${baseMapping.join(',')}`)
+  log.debug(`Base mapping (filter wheel order): ${baseMapping.join(',')}`)
+
+  // 输出 FWO_ 原始字节值（诊断通道映射）
+  const fwoEntry = directory.get('FWO_.1')
+  if (fwoEntry) {
+    const fwoData = readTagData(buffer, fwoEntry)
+    const rawBytes = Array.from(fwoData).map(b => `${String.fromCharCode(b)}(${b})`).join(' ')
+    log.debug(`FWO_.1 raw bytes: ${rawBytes}`)
+  } else {
+    log.debug(`FWO_.1 tag not found, using default mapping`)
+  }
 
   // 自动检测 trace 通道编号
   // 常见: DATA.9-12 (ABI 3130/3730), DATA.1-4, DATA.105-108, DATA.205-208
   const traceChannels = detectTraceChannels(directory)
-  console.log(`[AB1] Detected trace channels: [${traceChannels.join(', ')}]`)
+  log.debug(`Detected trace channels: [${traceChannels.join(', ')}]`)
 
   // 提取 trace 数据
   const traces: { A: number[]; C: number[]; G: number[]; T: number[] } = { A: [], C: [], G: [], T: [] }
@@ -158,7 +173,18 @@ export function parseAb1(buffer: Buffer): Ab1TraceData {
   for (const chNum of traceChannels) {
     const data = readTraceData(buffer, directory, chNum)
     channelData.push(data)
-    console.log(`[AB1] DATA.${chNum}: ${data.length} data points`)
+    // 通道基线统计
+    if (data.length > 0) {
+      const sorted = data.slice().sort((a, b) => a - b)
+      const mean = data.reduce((s, v) => s + v, 0) / data.length
+      const median = sorted[Math.floor(sorted.length / 2)]
+      const p5 = sorted[Math.floor(sorted.length * 0.05)]
+      const p25 = sorted[Math.floor(sorted.length * 0.25)]
+      const max = sorted[sorted.length - 1]
+      log.debug(`DATA.${chNum}: ${data.length} pts | mean=${Math.round(mean)} median=${median} p5=${p5} p25=${p25} max=${max}`)
+    } else {
+      log.debug(`DATA.${chNum}: empty`)
+    }
   }
 
   // 将通道数据映射到碱基
@@ -169,16 +195,78 @@ export function parseAb1(buffer: Buffer): Ab1TraceData {
 
   const dataPoints = Math.max(traces.A.length, traces.C.length, traces.G.length, traces.T.length)
 
-  console.log(`[AB1] Result: seq=${sequence.length}bp, peaks=${peakPositions.length}, traces=${dataPoints}pts, quality=${qualityValues.length}`)
+  // 始终使用算法从 trace 数据推导序列（不依赖仪器 PBAS）
+  // 仪器的 PBAS 可以保留在日志中用于调试对比
+  let derivedSequence = ''
+  let finalQualityValues = qualityValues
+  const finalPeakPositions = peakPositions // 仪器 PLOC 保持不变
+
+  if (peakPositions.length > 0 && dataPoints > 0) {
+    const called = callBases(traces, peakPositions, qualityValues.length > 0 ? qualityValues : undefined)
+    derivedSequence = called.sequence
+    if (qualityValues.length === 0) {
+      finalQualityValues = called.qualityScores
+    }
+    // 调试日志：对比算法结果与仪器 PBAS（带偏移最佳匹配）
+    if (sequence) {
+      const pbasLen = sequence.length
+      const algoLen = derivedSequence.length
+      let bestOffset = 0
+      let bestMatches = 0
+      let bestMatchCount = 0
+      
+      // 搜索最佳偏移量（-50 到 +50）
+      for (let offset = -50; offset <= 50; offset++) {
+        const start = Math.max(0, offset)
+        const end = Math.min(algoLen, pbasLen + offset)
+        const count = end - start
+        if (count <= 0) continue
+        let matches = 0
+        for (let i = start; i < end; i++) {
+          const pbasIdx = i - offset
+          if (pbasIdx >= 0 && pbasIdx < pbasLen && sequence[pbasIdx] === derivedSequence[i]) {
+            matches++
+          }
+        }
+        if (matches > bestMatches) {
+          bestMatches = matches
+          bestMatchCount = count
+          bestOffset = offset
+        }
+      }
+      
+      const matchRate = bestMatchCount > 0 ? Math.round(bestMatches / bestMatchCount * 100) : 0
+      log.info(`PBAS: ${pbasLen}bp | Algorithm: ${algoLen}bp | Best offset: ${bestOffset} | Match: ${bestMatches}/${bestMatchCount} (${matchRate}%)`)
+      
+      // 输出前 30 个错配详情
+      if (bestOffset !== 0 || matchRate < 100) {
+        const mismatches: string[] = []
+        const start = Math.max(0, bestOffset)
+        const end = Math.min(algoLen, pbasLen + bestOffset)
+        for (let i = start; i < end && mismatches.length < 30; i++) {
+          const pbasIdx = i - bestOffset
+          if (pbasIdx >= 0 && pbasIdx < pbasLen && sequence[pbasIdx] !== derivedSequence[i]) {
+            mismatches.push(`pos${i}:${derivedSequence[i]}(algo)≠${sequence[pbasIdx]}(pbas)`)
+          }
+        }
+        if (mismatches.length > 0) {
+          log.debug(`Mismatches (first ${mismatches.length}): ${mismatches.join(', ')}`)
+        }
+      }
+    }
+    log.info(`Base caller derived: ${derivedSequence.length}bp`)
+  }
+
+  log.info(`Result: seq=${derivedSequence.length}bp, peaks=${finalPeakPositions.length}, traces=${dataPoints}pts, quality=${finalQualityValues.length}`)
 
   return {
-    sequence,
-    peakPositions,
+    sequence: derivedSequence,
+    peakPositions: finalPeakPositions,
     traces,
     dataPoints,
     sampleName,
     runInfo,
-    qualityValues
+    qualityValues: finalQualityValues
   }
 }
 
@@ -212,7 +300,9 @@ function readDirectoryEntry(buffer: Buffer, offset: number): AbifDirectoryEntry 
     // 内联数据：从 handle 位置读取
     const handleStart = offset + 20
     const handleEnd = Math.min(handleStart + dataSize, buffer.length)
-    inlineData = buffer.subarray(handleStart, handleEnd)
+    const src = buffer.subarray(handleStart, handleEnd)
+    inlineData = Buffer.alloc(src.length)
+    src.copy(inlineData)
     dataOffset = -1 // 标记为内联
   } else {
     dataOffset = buffer.readInt32BE(offset + 20)
@@ -330,40 +420,43 @@ function readTraceData(buffer: Buffer, directory: Map<string, AbifDirectoryEntry
 
 /**
  * 自动检测 trace 数据通道编号
- * 查找所有 DATA.* 条目中 numElements 最大的 4 个（trace 数据通常元素数最多）
+ *
+ * ABIF 文件通常包含两组 DATA 通道：
+ *   - DATA.1-4: 原始/未处理信号（高分辨率，坐标空间与 PLOC 不匹配）
+ *   - DATA.9-12 / 105-108 / 205-208: 分析后信号（与 PLOC 坐标空间匹配）
+ *
+ * 必须使用分析后的通道进行碱基识别，否则 PLOC 峰位置对应错误的数据点。
+ *
+ * 优先级：
+ *   1. 检查已知分析后通道集合 (9-12, 105-108, 205-208)
+ *   2. 回退到 numElements 最大的 4 个通道
  */
 function detectTraceChannels(directory: Map<string, AbifDirectoryEntry>): number[] {
-  const dataEntries: { num: number; numElements: number; dataSize: number }[] = []
+  // 优先检查已知的分析后通道集合
+  const analyzedSets = [
+    [9, 10, 11, 12],      // ABI 3130/3730 分析后数据
+    [105, 106, 107, 108], // ABI 3500 分析后数据
+    [205, 206, 207, 208], // ABI 3500 备用分析后数据
+  ]
 
-  for (const [key, entry] of directory) {
-    if (key.startsWith('DATA.')) {
-      const num = entry.tagNumber
-      // 排除已知的非 trace 通道（DATA.1 通常是原始信号，DATA.100+ 是分析后数据等）
-      dataEntries.push({ num, numElements: entry.numElements, dataSize: entry.dataSize })
-    }
+  for (const set of analyzedSets) {
+    const count = set.filter(ch => directory.has(`DATA.${ch}`)).length
+    if (count === 4) return set
   }
 
-  // 按 numElements 降序排列，取前 4 个最大的
+  // 回退：查找所有 DATA.* 条目中 numElements 最大的 4 个
+  const dataEntries: { num: number; numElements: number; dataSize: number }[] = []
+  for (const [key, entry] of directory) {
+    if (key.startsWith('DATA.')) {
+      dataEntries.push({ num: entry.tagNumber, numElements: entry.numElements, dataSize: entry.dataSize })
+    }
+  }
   dataEntries.sort((a, b) => b.numElements - a.numElements)
 
   if (dataEntries.length >= 4) {
-    // 取最大的 4 个通道，按编号升序排列
     const top4 = dataEntries.slice(0, 4).map(e => e.num)
     top4.sort((a, b) => a - b)
     return top4
-  }
-
-  // 回退到常见通道编号
-  const commonSets = [
-    [9, 10, 11, 12],   // ABI 3130/3730
-    [1, 2, 3, 4],      // 部分旧型号
-    [105, 106, 107, 108], // ABI 3500
-    [205, 206, 207, 208], // ABI 3500 alternate
-  ]
-
-  for (const set of commonSets) {
-    const count = set.filter(ch => directory.has(`DATA.${ch}`)).length
-    if (count === 4) return set
   }
 
   // 最终回退

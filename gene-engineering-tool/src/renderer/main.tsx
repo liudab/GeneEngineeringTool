@@ -1,7 +1,6 @@
 import React from 'react'
 import ReactDOM from 'react-dom/client'
 import App from './App'
-import VectorEditorPage from './pages/VectorEditorPage'
 import { initLanguage } from '../shared/i18n'
 import './index.css'
 
@@ -13,21 +12,10 @@ try {
   initLanguage('zh')
 }
 
-// 检查 URL 参数决定渲染哪个页面
-const params = new URLSearchParams(window.location.search)
-const mode = params.get('mode')
-const vectorId = params.get('vectorId')
-
-if (mode === 'editor' && vectorId) {
-  ReactDOM.createRoot(document.getElementById('root')!).render(
-    <React.StrictMode>
-      <VectorEditorPage vectorId={parseInt(vectorId)} />
-    </React.StrictMode>
-  )
-} else {
-  ReactDOM.createRoot(document.getElementById('root')!).render(
-    <React.StrictMode>
-      <App />
-    </React.StrictMode>
-  )
-}
+// 所有路由（主窗口 / 编辑器窗口 / 基因编辑器窗口）统一由 App 组件处理
+// App 内部通过 getEditorMode() 检测 URL 参数，分发到对应页面
+ReactDOM.createRoot(document.getElementById('root')!).render(
+  <React.StrictMode>
+    <App />
+  </React.StrictMode>
+)

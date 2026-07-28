@@ -1,5 +1,5 @@
 {
-  "app.title": "Genetic Engineering Tool",
+  "app.title": "HelixCraft",
 
   "nav.enzymes": "Enzyme Library",
   "nav.vectors": "Vector Database",
@@ -61,6 +61,7 @@
   "editor.uniqueEnzymesOnly": "Unique sites only",
   "editor.styleSettings": "Style Settings",
   "editor.enzymeSettings": "Enzyme Site Settings",
+  "editor.smartAnnotate": "Smart Annotate",
   "editor.scanPrimers": "Scan Universal Primers",
   "editor.noSequence": "No sequence. Please import sequence first.",
   "editor.noPrimerMatch": "No universal primer matches found",
@@ -144,8 +145,17 @@
   "dialog.save": "Save",
   "dialog.confirmDelete": "Are you sure you want to delete?",
 
-  "about.title": "About",
-  "about.description": "Genetic Engineering Tool v0.1.0",
+  "about.title": "About HelixCraft",
+  "about.description": "HelixCraft v0.1.0 - Genetic Engineering Assistant",
+
+  "about.softwareName": "HelixCraft",
+  "about.version": "Internal Beta v0.1.0 (Do not distribute)",
+  "about.author": "Bohan Liu @ BohanLab",
+  "about.email": "liubohan@hunau.edu.cn",
+  "about.copyright": "All rights reserved (© Bohan Liu)",
+  "about.license": "For academic and educational use only. Commercial use is strictly prohibited",
+  "about.internalNote": "This is an internal beta version. Please do not distribute",
+  "about.businessContact": "For business cooperation or investment inquiries, please contact",
 
   "featureType.gene": "Gene",
   "featureType.CDS": "Coding Sequence",
@@ -160,6 +170,8 @@
   "featureType.enhancer": "Enhancer",
   "featureType.exon": "Exon",
   "featureType.intron": "Intron",
+  "featureType.five_prime_UTR": "5' UTR",
+  "featureType.three_prime_UTR": "3' UTR",
   "featureType.sig_peptide": "Signal Peptide",
   "featureType.polyA_signal": "PolyA Signal",
   "featureType.source": "Source",
@@ -224,5 +236,13 @@
   "seq.ab1Sequence": "AB1 Called Sequence",
 
   "editor.alignSequence": "Sequence Alignment",
-  "editor.designPrimers": "Design Primers"
+  "editor.designPrimers": "Design Primers",
+  "editor.primerScan": "Primer Scan",
+  "editor.pairwiseAlign": "Pairwise Alignment",
+  "editor.basicCloning": "Basic Cloning",
+  "editor.advancedCloning": "Advanced Cloning",
+  "editor.digestSim": "Digest Simulation",
+  "editor.proteinAnalysis": "Protein Analysis",
+  "editor.msa": "Multiple Sequence Alignment",
+  "editor.markSelection": "Mark Selection"
 }

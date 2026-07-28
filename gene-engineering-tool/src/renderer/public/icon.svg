@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="96" fill="#0f172a"/>
+  <!-- DNA double helix -->
+  <g transform="translate(256, 256)">
+    <!-- Strand 1 -->
+    <path d="M-80,-180 C-80,-120 80,-120 80,-60 C80,0 -80,0 -80,60 C-80,120 80,120 80,180" 
+      fill="none" stroke="#22c55e" stroke-width="16" stroke-linecap="round"/>
+    <!-- Strand 2 -->
+    <path d="M80,-180 C80,-120 -80,-120 -80,-60 C-80,0 80,0 80,60 C80,120 -80,120 -80,180" 
+      fill="none" stroke="#3b82f6" stroke-width="16" stroke-linecap="round"/>
+    <!-- Base pairs (rungs) -->
+    <line x1="-40" y1="-150" x2="40" y2="-150" stroke="#f59e0b" stroke-width="8" stroke-linecap="round"/>
+    <line x1="-65" y1="-90" x2="65" y2="-90" stroke="#ef4444" stroke-width="8" stroke-linecap="round"/>
+    <line x1="-65" y1="-30" x2="65" y2="-30" stroke="#22c55e" stroke-width="8" stroke-linecap="round"/>
+    <line x1="-40" y1="30" x2="40" y2="30" stroke="#3b82f6" stroke-width="8" stroke-linecap="round"/>
+    <line x1="-65" y1="90" x2="65" y2="90" stroke="#f59e0b" stroke-width="8" stroke-linecap="round"/>
+    <line x1="-40" y1="150" x2="40" y2="150" stroke="#ef4444" stroke-width="8" stroke-linecap="round"/>
+  </g>
+  <!-- App name -->
+  <text x="256" y="440" text-anchor="middle" fill="white" font-family="sans-serif" font-weight="bold" font-size="48">GeneTool</text>
+</svg>

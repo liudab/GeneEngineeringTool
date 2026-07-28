@@ -8,6 +8,7 @@
 
 import { useState, useMemo } from 'react'
 import { Download, ChevronLeft, ChevronRight } from 'lucide-react'
+import { useLifecycleLog } from '../../hooks/useDebugLog'
 import type { AlignmentOutput, AlignmentResult } from '../../engine/alignment/types'
 import { exportAlignmentToFasta, exportAlignmentToCSV } from '../../engine/alignment/index'
 
@@ -19,6 +20,7 @@ interface Props {
 const CHARS_PER_LINE = 60
 
 export default function AlignmentViewer({ output, className = '' }: Props) {
+  useLifecycleLog('AlignmentViewer', { results: output.results.length })
   const [currentResult, setCurrentResult] = useState(0)
   const result = output.results[currentResult]
 

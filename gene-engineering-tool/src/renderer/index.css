@@ -56,3 +56,37 @@ body {
 .sequence-display .nucleotide-T { color: #ef4444; }
 .sequence-display .nucleotide-G { color: #f59e0b; }
 .sequence-display .nucleotide-C { color: #3b82f6; }
+
+/* ============ UI Animation Keyframes ============ */
+@keyframes toast-in {
+  from { opacity: 0; transform: translateY(8px) scale(0.96); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@keyframes task-pulse {
+  0%   { left: -30%; }
+  100% { left: 100%; }
+}
+
+/* ============ Responsive Breakpoints ============ */
+/* xs: < 640px (mobile) */
+/* sm: 640-1024px (large phone / foldable) */
+/* md: 1024-1366px (tablet) */
+/* lg: > 1366px (desktop) — default */
+
+@media (max-width: 1024px) {
+  /* Tablet: sidebar collapses */
+  :root {
+    --sidebar-width: 64px;
+  }
+}
+
+@media (max-width: 640px) {
+  /* Mobile: sidebar becomes top nav */
+  :root {
+    --sidebar-width: 0px;
+  }
+  body {
+    font-size: 14px;
+  }
+}

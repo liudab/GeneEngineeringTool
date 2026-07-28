@@ -1,18 +1,28 @@
 import { useState, useEffect } from 'react'
 import { FolderOpen, FileText, AlignLeft, FlaskConical, X } from 'lucide-react'
 import type { GenBankRecord, FastaRecord } from '../../shared/types'
-import PlasmidViewer from '../components/PlasmidViewer/PlasmidViewer'
+import VectorMapViewer from '../components/VectorMapViewer/VectorMapViewer'
+import type { EnzymeFilterState } from '../components/VectorMapViewer/VectorMapViewer'
 import AlignmentViewer from '../components/AlignmentViewer/AlignmentViewer'
 import PrimerDesignPanel from '../components/PrimerDesignPanel/PrimerDesignPanel'
 import { useAlignment } from '../hooks/useAlignment'
 import { usePrimerDesign } from '../hooks/usePrimerDesign'
 import type { AlignmentType } from '../engine/alignment/types'
+import { useLifecycleLog, useModuleLogger } from '../hooks/useDebugLog'
 
 export default function FileViewerPage() {
+  useLifecycleLog('FileViewerPage')
+  const log = useModuleLogger('FileViewerPage')
+
   const [fileResult, setFileResult] = useState<any>(null)
   const [genBankData, setGenBankData] = useState<GenBankRecord | null>(null)
   const [fastaData, setFastaData] = useState<FastaRecord[] | null>(null)
   const [viewMode, setViewMode] = useState<'circular' | 'linear'>('circular')
+  const [selectedFeature, setSelectedFeature] = useState<number | null>(null)
+  const [hoveredFeature, setHoveredFeature] = useState<number | null>(null)
+  const [enzymeFilter, setEnzymeFilter] = useState<EnzymeFilterState>({
+    enabled: false, showUniqueOnly: false, overhangTypes: new Set(), subtypes: new Set(), selectedEnzymes: new Set(), searchQuery: ''
+  })
 
   // 比对 & 引物设计
   const alignment = useAlignment()
@@ -47,8 +57,10 @@ export default function FileViewerPage() {
   }, [])
 
   const handleOpenFile = async () => {
+    log.info('Opening file...')
     const result = await window.api.openFile()
     if (result) {
+      log.info(`File opened: type=${result.type}, path=${result.filePath}`)
       setFileResult(result)
       if (result.type === 'genbank') {
         setGenBankData(result.data)
@@ -65,7 +77,7 @@ export default function FileViewerPage() {
       <div className="flex flex-col items-center justify-center h-full text-slate-400">
         <FolderOpen size={64} className="mb-4" />
         <p className="text-lg mb-2">打开序列文件</p>
-        <p className="text-sm mb-4">支持 GenBank (.gb)、FASTA (.fasta) 和 SnapGene (.dna) 格式</p>
+        <p className="text-sm mb-4">支持 GenBank (.gb)、FASTA (.fasta) 和外部 DNA Binary (.dna) 格式</p>
         <button onClick={handleOpenFile}
           className="px-6 py-3 bg-green-600 text-white rounded-lg hover:bg-green-500 flex items-center gap-2">
           <FolderOpen size={20} /> 选择文件
@@ -117,7 +129,22 @@ export default function FileViewerPage() {
         <div className="flex-1 flex gap-6 overflow-hidden">
           {/* SVG Viewer */}
           <div className="flex-1 bg-white rounded-lg border border-slate-200 overflow-auto">
-            <PlasmidViewer record={genBankData} viewMode={viewMode} />
+            <VectorMapViewer
+              sequence={genBankData.sequence || ''}
+              size={genBankData.size || 0}
+              name={genBankData.name}
+              topology={genBankData.topology || 'circular'}
+              features={genBankData.features}
+              enzymeSites={[]}
+              enzymeFilter={enzymeFilter}
+              onEnzymeFilterChange={setEnzymeFilter}
+              viewMode={viewMode}
+              selectedFeature={selectedFeature}
+              onSelectFeature={setSelectedFeature}
+              hoveredFeature={hoveredFeature}
+              onHoverFeature={setHoveredFeature}
+              readOnly
+            />
           </div>
 
           {/* Feature list */}

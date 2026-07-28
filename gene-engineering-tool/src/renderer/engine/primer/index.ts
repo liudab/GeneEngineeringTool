@@ -4,13 +4,17 @@
 
 export type {
   PrimerDesignMode, PrimerDesignParams, PrimerDetail,
-  DesignedPrimer, PrimerDesignResult, ScoreBreakdown
+  DesignedPrimer, PrimerDesignResult, ScoreBreakdown, FailureReasons
 } from './types'
 export { DEFAULT_PRIMER_PARAMS } from './types'
-export { calcTm, calcGc, calcThreePrimeStability, calcHairpinDG, calcDimerDG, maxHomopolymer } from './thermo'
+export { calcTm, calcGc, calcThreePrimeStability, calcHairpinDG, calcDimerDG, maxHomopolymer, calcSelfComplementarity, calcSelfThreePrimeComplementarity, calcPairThreePrimeComplementarity } from './thermo'
 export { scorePrimerPair } from './primerScorer'
 export { designPrimers, designBatchPrimers } from './primerDesigner'
 export type { BatchDesignOptions, BatchDesignResult } from './primerDesigner'
+export { checkSpecificity, checkPrimerPairSpecificity } from './specificityChecker'
+export type { SpecificityResult, OffTargetSite } from './specificityChecker'
+export { runInSilicoPcr } from './inSilicoPcr'
+export type { InSilicoPcrResult, PcrProduct } from './inSilicoPcr'
 
 import type { PrimerDesignResult, DesignedPrimer } from './types'
 

@@ -32,3 +32,26 @@ npm-debug.log*
 # Temporary files
 *.tmp
 *.bak
+
+# Screenshots
+*.png
+!src/**/*.png
+!build/**/*.png
+
+# Eval & debug scripts
+eval-*.js
+.eval-tmp/
+debug-*.cjs
+analyze-*.cjs
+convert-*.cjs
+generate-*.cjs
+
+# Canvas status files
+*.canvas.status.json
+*.canvas.tsx
+
+# Misc temp
+icon.ico
+optimization-spec.md
+seed-components-data.json
+eval-*.cjs

@@ -1,4 +1,5 @@
 import { useState, useRef, useCallback, useEffect, useMemo } from 'react'
+import { useLifecycleLog, useThrottledLog } from '../../hooks/useDebugLog'
 
 interface TraceData {
   A: number[]
@@ -38,8 +39,10 @@ const QUALITY_COLOR = (q: number): string => {
 export default function ChromatogramViewer({
   traces, peakPositions, sequence, qualityValues,
   referenceSequence, referenceSource,
-  width: propWidth, height = 380
+  width: propWidth, height = 420
 }: Props) {
+  useLifecycleLog('ChromatogramViewer', { seqLen: sequence?.length, hasRef: !!referenceSequence })
+  const throttledLog = useThrottledLog('ChromatogramViewer')
   const containerRef = useRef<HTMLDivElement>(null)
   const [containerWidth, setContainerWidth] = useState(800)
   // 视图范围使用数据点索引（与原始 trace 数据对齐）
@@ -51,15 +54,17 @@ export default function ChromatogramViewer({
   const [selectedBase, setSelectedBase] = useState<number | null>(null)
   const [hoveredBase, setHoveredBase] = useState<number | null>(null)
 
+  const yAxisW = 42 // Y 轴预留宽度
   const width = propWidth || containerWidth
+  const plotWidth = width - yAxisW // 实际绑图区宽度
   const seqLen = sequence?.length || 0
   const hasRef = !!referenceSequence && referenceSequence.length > 0
   const hasPeaks = peakPositions && peakPositions.length > 0
 
-  // 布局区域高度
+  // 布局区域高度（不再显示参考序列双行，只保留 AB1 碱基行）
   const bpLabelH = 22
-  const refLabelH = hasRef ? 22 : 0
-  const qualityH = 30
+  const refLabelH = 0
+  const qualityH = 34 // 增加 4px 用于 Quality 标签
   const axisH = 18
   const plotTop = bpLabelH + refLabelH + 4
   const plotBottom = height - qualityH - axisH - 8
@@ -70,33 +75,6 @@ export default function ChromatogramViewer({
     Math.max(traces.A?.length || 0, traces.C?.length || 0, traces.G?.length || 0, traces.T?.length || 0),
     [traces]
   )
-
-  // ===== 核心：数据点索引 → 碱基位置（0-based）查找表 =====
-  // 使用分段线性插值，在 peakPositions 之间线性映射
-  const dpToBasePos = useMemo(() => {
-    const total = traces.A?.length || 0
-    if (total === 0 || !hasPeaks) return null
-    const table = new Float64Array(total)
-    const peaks = peakPositions
-    const numPeaks = peaks.length
-    for (let i = 0; i < total; i++) {
-      if (i <= peaks[0]) {
-        table[i] = 0
-      } else if (i >= peaks[numPeaks - 1]) {
-        table[i] = numPeaks - 1
-      } else {
-        // 二分查找 peakPositions 中 i 所在的区间
-        let lo = 0, hi = numPeaks - 1
-        while (hi - lo > 1) {
-          const mid = (lo + hi) >> 1
-          if (peaks[mid] <= i) lo = mid; else hi = mid
-        }
-        const frac = (i - peaks[lo]) / (peaks[hi] - peaks[lo])
-        table[i] = lo + frac
-      }
-    }
-    return table
-  }, [traces, peakPositions, hasPeaks])
 
   // 自适应容器宽度
   useEffect(() => {
@@ -111,6 +89,30 @@ export default function ChromatogramViewer({
     return () => obs.disconnect()
   }, [propWidth])
 
+  // 非 passive 的 wheel 事件监听（允许 preventDefault 阻止页面滚动）
+  useEffect(() => {
+    const svgEl = containerRef.current?.querySelector('svg')
+    if (!svgEl) return
+    const handler = (e: WheelEvent) => {
+      e.preventDefault()
+      const zoomFactor = e.deltaY > 0 ? 1.15 : 0.87
+      const rect = svgEl.getBoundingClientRect()
+      const offsetX = e.clientX - rect.left
+      const mouseDp = viewStart + ((offsetX - yAxisW) / plotWidth) * (viewEnd - viewStart)
+      const range = viewEnd - viewStart
+      const newRange = Math.max(50, Math.min(dataPoints, range * zoomFactor))
+      const ratio = (mouseDp - viewStart) / range
+      let newStart = mouseDp - ratio * newRange
+      let newEnd = newStart + newRange
+      if (newStart < 0) { newStart = 0; newEnd = newRange }
+      if (newEnd > dataPoints) { newEnd = dataPoints; newStart = dataPoints - newRange }
+      setViewStart(Math.max(0, newStart))
+      setViewEnd(Math.min(dataPoints, newEnd))
+    }
+    svgEl.addEventListener('wheel', handler, { passive: false })
+    return () => svgEl.removeEventListener('wheel', handler)
+  }, [viewStart, viewEnd, dataPoints, yAxisW, plotWidth])
+
   // 初始化视图范围（数据点空间，显示前 80 个碱基对应的数据点范围）
   useEffect(() => {
     if (dataPoints > 0 && viewEnd === 0) {
@@ -124,15 +126,19 @@ export default function ChromatogramViewer({
     }
   }, [dataPoints, seqLen])
 
-  // X 坐标转换：数据点索引 → 像素
+  // X 坐标转换：数据点索引 → 像素（相对于 Y 轴右侧绑图区）
   const xScale = useCallback((dpIdx: number) => {
-    return ((dpIdx - viewStart) / (viewEnd - viewStart)) * width
-  }, [viewStart, viewEnd, width])
+    const range = viewEnd - viewStart
+    if (range <= 0) return yAxisW // 视图未初始化时返回安全值
+    return yAxisW + ((dpIdx - viewStart) / range) * plotWidth
+  }, [viewStart, viewEnd, plotWidth, yAxisW])
 
   // X 坐标反转换：像素 → 数据点索引
   const dpFromX = useCallback((x: number) => {
-    return viewStart + (x / width) * (viewEnd - viewStart)
-  }, [viewStart, viewEnd, width])
+    const range = viewEnd - viewStart
+    if (range <= 0) return 0
+    return viewStart + ((x - yAxisW) / plotWidth) * range
+  }, [viewStart, viewEnd, plotWidth, yAxisW])
 
   // 碱基位置 → 像素（通过 peakPositions 映射到数据点空间）
   const baseToX = useCallback((baseIdx: number) => {
@@ -157,9 +163,9 @@ export default function ChromatogramViewer({
   // 每碱基像素数
   const bpPerPixel = useMemo(() => {
     const range = visibleBaseRange.end - visibleBaseRange.start
-    if (range <= 0) return width / 80
-    return width / range
-  }, [visibleBaseRange, width])
+    if (range <= 0) return 0
+    return plotWidth / range
+  }, [visibleBaseRange, plotWidth])
 
   const showBaseLabels = bpPerPixel > 6
 
@@ -181,52 +187,101 @@ export default function ChromatogramViewer({
     return plotBottom - (val / yMax) * plotHeight
   }, [yMax, plotBottom, plotHeight])
 
-  // 生成 SVG path（使用查找表将数据点映射到碱基位置坐标）
+  // 生成 SVG path — 自然曲线，逐点直线连接，真实反映原始 trace 信号
   const makePath = useCallback((data: number[]) => {
-    if (!data || data.length === 0 || !dpToBasePos) return ''
+    if (!data || data.length === 0) return ''
     const start = Math.max(0, Math.floor(viewStart))
     const end = Math.min(data.length, Math.ceil(viewEnd))
-    const step = Math.max(1, Math.floor((end - start) / width))
-    // 计算可见碱基范围用于像素映射
-    const bStart = visibleBaseRange.start
-    const bEnd = visibleBaseRange.end
-    const bRange = bEnd - bStart || 1
+    const range = viewEnd - viewStart
+    if (range <= 0) return ''
+    const step = Math.max(1, Math.floor((end - start) / plotWidth))
 
     let d = ''
     let first = true
     for (let i = start; i < end; i += step) {
-      const basePos = dpToBasePos[i]
-      // 将碱基位置映射到像素（相对于可见碱基范围）
-      const px = ((basePos - bStart) / bRange) * width
+      const px = xScale(i)
       const y = yScale(data[i])
       d += first ? `M${px},${y}` : `L${px},${y}`
       first = false
     }
     return d
-  }, [viewStart, viewEnd, yScale, width, dpToBasePos, visibleBaseRange])
+  }, [viewStart, viewEnd, xScale, yScale, plotWidth])
 
-  // 可见碱基列表
+  // 可见碱基列表 + 峰顶坐标（跳过 N 和 Q=0 被抑制峰）
   const visibleBases = useMemo(() => {
     if (!hasPeaks || !sequence) return []
-    const bases: { idx: number; base: string; x: number }[] = []
+    const bases: { idx: number; base: string; x: number; peakY: number }[] = []
     const { start, end } = visibleBaseRange
     for (let i = start; i <= end && i < seqLen; i++) {
-      bases.push({ idx: i, base: sequence[i], x: baseToX(i) })
+      const base = sequence[i]
+      if (base === 'N') continue
+      if (qualityValues && qualityValues[i] === 0) continue // 套峰抑制
+      const dpIdx = peakPositions[i]
+      const traceVal = (traces as any)[base]?.[dpIdx] ?? 0
+      bases.push({
+        idx: i,
+        base,
+        x: baseToX(i),
+        peakY: yScale(traceVal)
+      })
     }
     return bases
-  }, [hasPeaks, sequence, visibleBaseRange, seqLen, baseToX])
+  }, [hasPeaks, sequence, visibleBaseRange, seqLen, baseToX, peakPositions, traces, yScale, qualityValues])
 
-  // 比对结果
-  const mismatchMap = useMemo(() => {
-    if (!referenceSequence || !sequence) return new Map<number, string>()
+  // 比对结果：局部对齐（查找最佳偏移量）
+  const { mismatchMap, alignOffset } = useMemo(() => {
+    if (!referenceSequence || !sequence) return { mismatchMap: new Map<number, string>(), alignOffset: -1 }
+
+    const seqUp = sequence.toUpperCase()
+    const refUp = referenceSequence.toUpperCase()
+    const seqLen = sequence.length
+    const refLen = referenceSequence.length
+
+    let bestOffset = 0
+    let bestScore = 0
+
+    // 滑动窗口查找最佳偏移（AB1 序列中参考序列的起始位置）
+    for (let offset = 0; offset <= seqLen - 30; offset++) {
+      let score = 0
+      const wLen = Math.min(50, refLen, seqLen - offset)
+      for (let i = 0; i < wLen; i++) {
+        if (seqUp[offset + i] === refUp[i]) score++
+      }
+      if (score > bestScore) { bestScore = score; bestOffset = offset }
+    }
+
+    // 也检查反向：参考序列中 AB1 的起始位置
+    for (let offset = 1; offset <= refLen - 30; offset++) {
+      let score = 0
+      const wLen = Math.min(50, seqLen, refLen - offset)
+      for (let i = 0; i < wLen; i++) {
+        if (seqUp[i] === refUp[offset + i]) score++
+      }
+      if (score > bestScore) { bestScore = score; bestOffset = -offset }
+    }
+
+    // 阈值：至少 60% 匹配才认为比对成功
+    if (bestScore < 18) return { mismatchMap: new Map<number, string>(), alignOffset: -1 }
+
     const map = new Map<number, string>()
-    const len = Math.min(sequence.length, referenceSequence.length)
-    for (let i = 0; i < len; i++) {
-      if (sequence[i].toUpperCase() !== referenceSequence[i].toUpperCase()) {
-        map.set(i, referenceSequence[i])
+    if (bestOffset >= 0) {
+      // AB1[bestOffset + i] 对应 ref[i]
+      for (let i = 0; i < refLen && (bestOffset + i) < seqLen; i++) {
+        if (seqUp[bestOffset + i] !== refUp[i]) {
+          map.set(bestOffset + i, refUp[i])
+        }
+      }
+    } else {
+      // ref[-bestOffset + i] 对应 AB1[i]
+      const refStart = -bestOffset
+      for (let i = 0; i < seqLen && (refStart + i) < refLen; i++) {
+        if (seqUp[i] !== refUp[refStart + i]) {
+          map.set(i, refUp[refStart + i])
+        }
       }
     }
-    return map
+
+    return { mismatchMap: map, alignOffset: bestOffset }
   }, [sequence, referenceSequence])
 
   // 鼠标滚轮缩放（数据点空间）
@@ -245,6 +300,52 @@ export default function ChromatogramViewer({
     setViewEnd(Math.min(dataPoints, newEnd))
   }, [viewStart, viewEnd, dataPoints, dpFromX])
 
+  // 左右平移（按可见范围的 25%）
+  const panBy = useCallback((direction: 'left' | 'right') => {
+    const range = viewEnd - viewStart
+    const step = range * 0.25 * (direction === 'left' ? -1 : 1)
+    let newStart = viewStart + step
+    let newEnd = viewEnd + step
+    if (newStart < 0) { newStart = 0; newEnd = range }
+    if (newEnd > dataPoints) { newEnd = dataPoints; newStart = dataPoints - range }
+    setViewStart(Math.max(0, newStart))
+    setViewEnd(Math.min(dataPoints, newEnd))
+  }, [viewStart, viewEnd, dataPoints])
+
+  // 缩放到指定碱基数（使用实际 peakPositions 计算数据点范围）
+  const zoomToBases = useCallback((numBases: number) => {
+    if (!hasPeaks || peakPositions.length === 0) return
+    // 计算当前视图中心对应的碱基索引
+    const centerDp = (viewStart + viewEnd) / 2
+    // 找到中心最近的碱基
+    let centerBaseIdx = 0
+    for (let i = 0; i < peakPositions.length; i++) {
+      if (peakPositions[i] >= centerDp) { centerBaseIdx = i; break }
+    }
+    const halfBases = Math.floor(numBases / 2)
+    const startBase = Math.max(0, centerBaseIdx - halfBases)
+    const endBase = Math.min(peakPositions.length - 1, startBase + numBases)
+    let newStart = startBase > 0 ? peakPositions[startBase] - 10 : 0
+    let newEnd = endBase < peakPositions.length - 1 ? peakPositions[endBase] + 10 : dataPoints
+    if (newEnd - newStart < 50) newEnd = newStart + 50
+    setViewStart(Math.max(0, newStart))
+    setViewEnd(Math.min(dataPoints, newEnd))
+  }, [viewStart, viewEnd, dataPoints, hasPeaks, peakPositions])
+
+  // 键盘支持
+  useEffect(() => {
+    const el = containerRef.current
+    if (!el) return
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === 'ArrowLeft') { panBy('left'); e.preventDefault() }
+      else if (e.key === 'ArrowRight') { panBy('right'); e.preventDefault() }
+      else if (e.key === '+' || e.key === '=') { handleWheel({ preventDefault: () => {}, deltaY: -100, nativeEvent: { offsetX: yAxisW + plotWidth / 2 } } as any); e.preventDefault() }
+      else if (e.key === '-') { handleWheel({ preventDefault: () => {}, deltaY: 100, nativeEvent: { offsetX: yAxisW + plotWidth / 2 } } as any); e.preventDefault() }
+    }
+    el.addEventListener('keydown', handler)
+    return () => el.removeEventListener('keydown', handler)
+  }, [panBy, handleWheel, yAxisW, plotWidth])
+
   // 拖拽平移
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
     if (e.button !== 0) return
@@ -254,30 +355,36 @@ export default function ChromatogramViewer({
   }, [viewStart])
 
   const handleMouseMove = useCallback((e: React.MouseEvent) => {
-    // Hover 碱基
+    // Hover 碱基：找到鼠标位置最近的数据点，再找最近的峰位
     const rect = (e.target as Element).closest('svg')?.getBoundingClientRect()
     if (rect && hasPeaks) {
       const x = e.clientX - rect.left
       const dpPos = dpFromX(x)
-      // 找到最近的数据点对应的碱基
-      const dpIdx = Math.round(dpPos)
-      if (dpToBasePos && dpIdx >= 0 && dpIdx < dpToBasePos.length) {
-        const baseIdx = Math.round(dpToBasePos[dpIdx])
-        if (baseIdx >= 0 && baseIdx < seqLen) {
-          const baseX = baseToX(baseIdx)
-          if (Math.abs(baseX - x) < bpPerPixel * 0.6) {
-            setHoveredBase(baseIdx)
-          } else {
-            setHoveredBase(null)
-          }
+      // 二分查找最近的峰位
+      let lo = 0, hi = peakPositions.length - 1
+      while (lo < hi) {
+        const mid = (lo + hi) >> 1
+        if (peakPositions[mid] < dpPos) lo = mid + 1; else hi = mid
+      }
+      // 比较 lo 和 lo-1 哪个更近
+      let baseIdx = lo
+      if (lo > 0 && Math.abs(peakPositions[lo - 1] - dpPos) < Math.abs(peakPositions[lo] - dpPos)) {
+        baseIdx = lo - 1
+      }
+      if (baseIdx >= 0 && baseIdx < seqLen) {
+        const baseX = baseToX(baseIdx)
+        if (Math.abs(baseX - x) < Math.max(bpPerPixel * 0.6, 8)) {
+          setHoveredBase(baseIdx)
         } else {
           setHoveredBase(null)
         }
+      } else {
+        setHoveredBase(null)
       }
     }
     if (!isDragging) return
     const dx = e.clientX - dragStartX
-    const dpDx = (dx / width) * (viewEnd - viewStart)
+    const dpDx = (dx / plotWidth) * (viewEnd - viewStart)
     const range = viewEnd - viewStart
     let newStart = dragStartView - dpDx
     let newEnd = newStart + range
@@ -285,7 +392,7 @@ export default function ChromatogramViewer({
     if (newEnd > dataPoints) { newEnd = dataPoints; newStart = dataPoints - range }
     setViewStart(Math.max(0, newStart))
     setViewEnd(Math.min(dataPoints, newEnd))
-  }, [isDragging, dragStartX, dragStartView, viewStart, viewEnd, dataPoints, width, dpFromX, dpToBasePos, baseToX, bpPerPixel, seqLen, hasPeaks])
+  }, [isDragging, dragStartX, dragStartView, viewStart, viewEnd, dataPoints, plotWidth, dpFromX, peakPositions, baseToX, bpPerPixel, seqLen, hasPeaks])
 
   const handleMouseUp = useCallback(() => { setIsDragging(false) }, [])
 
@@ -309,6 +416,21 @@ export default function ChromatogramViewer({
     return result
   }, [visibleBaseRange, baseToX, peakPositions, hasPeaks])
 
+  // Y 轴刻度（荧光强度）
+  const yTicks = useMemo(() => {
+    const result: { y: number; label: string }[] = []
+    if (yMax <= 0) return result
+    // 计算合适的刻度间距
+    const rawStep = yMax / 5
+    const magnitude = Math.pow(10, Math.floor(Math.log10(rawStep)))
+    const residual = rawStep / magnitude
+    const niceStep = residual <= 1.5 ? magnitude : residual <= 3 ? 2 * magnitude : residual <= 7 ? 5 * magnitude : 10 * magnitude
+    for (let v = 0; v <= yMax; v += niceStep) {
+      result.push({ y: yScale(v), label: v >= 1000 ? `${(v / 1000).toFixed(1)}k` : String(Math.round(v)) })
+    }
+    return result
+  }, [yMax, yScale])
+
   if (!traces || dataPoints === 0) {
     return <div className="text-sm text-slate-400 text-center py-4">无色谱数据</div>
   }
@@ -316,45 +438,35 @@ export default function ChromatogramViewer({
   const qualityBarH = qualityH - 6
 
   return (
-    <div ref={containerRef} className="w-full select-none">
+    <div ref={containerRef} className="w-full select-none" tabIndex={0} style={{ outline: 'none' }}>
       <svg
         width={width}
         height={height}
         className="bg-white"
         style={{ cursor: isDragging ? 'grabbing' : 'grab' }}
-        onWheel={handleWheel}
         onMouseDown={handleMouseDown}
         onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}
         onMouseLeave={() => { setIsDragging(false); setHoveredBase(null) }}
         onClick={handleClick}
       >
-        {/* ===== 参考序列行（最顶部） ===== */}
-        {hasRef && showBaseLabels && visibleBases.map(({ idx, x }) => {
-          const refBase = idx < referenceSequence!.length ? referenceSequence![idx] : ''
-          if (!refBase) return null
-          const isMismatch = mismatchMap.has(idx)
-          return (
-            <text key={`ref-${idx}`}
-              x={x} y={bpLabelH - 4}
-              textAnchor="middle"
-              fontSize={bpPerPixel < 9 ? 9 : 11}
-              fontFamily="monospace"
-              fontWeight={isMismatch ? 'bold' : 'normal'}
-              fill={isMismatch ? '#dc2626' : '#94a3b8'}
-            >
-              {refBase.toUpperCase()}
-            </text>
-          )
-        })}
+        {/* ===== Y 轴（荧光强度） ===== */}
+        <line x1={yAxisW} y1={plotTop} x2={yAxisW} y2={plotBottom} stroke="#cbd5e1" strokeWidth={1} />
+        {yTicks.map((tick, i) => (
+          <g key={`yt-${i}`}>
+            <line x1={yAxisW - 4} y1={tick.y} x2={yAxisW} y2={tick.y} stroke="#94a3b8" strokeWidth={0.5} />
+            <line x1={yAxisW} y1={tick.y} x2={width} y2={tick.y} stroke="#f1f5f9" strokeWidth={0.5} />
+            <text x={yAxisW - 6} y={tick.y + 3} textAnchor="end" fontSize={9} fill="#94a3b8" fontFamily="monospace">{tick.label}</text>
+          </g>
+        ))}
+        <text x={2} y={plotTop + plotHeight / 2} fontSize={9} fill="#94a3b8" transform={`rotate(-90, 8, ${plotTop + plotHeight / 2})`} textAnchor="middle">Intensity</text>
 
-        {/* ===== AB1 碱基字母行 ===== */}
+        {/* ===== AB1 碱基字母行（唯一的碱基行） ===== */}
         {showBaseLabels && visibleBases.map(({ idx, base, x }) => {
-          const isMismatch = mismatchMap.has(idx)
           return (
             <text key={`base-${idx}`}
               x={x}
-              y={bpLabelH + refLabelH - 4}
+              y={bpLabelH - 4}
               textAnchor="middle"
               fontSize={bpPerPixel < 9 ? 10 : bpPerPixel < 14 ? 12 : 14}
               fontFamily="monospace"
@@ -363,19 +475,27 @@ export default function ChromatogramViewer({
               opacity={idx === selectedBase ? 1 : idx === hoveredBase ? 0.9 : 0.75}
             >
               {base}
-              {isMismatch && <tspan fill="#dc2626" fontSize={8}>✕</tspan>}
             </text>
           )
         })}
 
         {/* ===== 背景底线 ===== */}
-        <line x1={0} y1={plotBottom} x2={width} y2={plotBottom} stroke="#e2e8f0" strokeWidth={1} />
+        <line x1={yAxisW} y1={plotBottom} x2={width} y2={plotBottom} stroke="#e2e8f0" strokeWidth={1} />
+        {/* 顶部边界线 */}
+        <line x1={yAxisW} y1={plotTop} x2={width} y2={plotTop} stroke="#f1f5f9" strokeWidth={0.5} />
 
-        {/* ===== 峰位置竖线 ===== */}
-        {showBaseLabels && visibleBases.map(({ idx, x }) => (
-          <line key={`vl-${idx}`} x1={x} y1={plotTop} x2={x} y2={plotBottom}
-            stroke={BASE_COLORS[sequence[idx]] || '#ccc'} strokeWidth={0.3} opacity={0.25} />
-        ))}
+        {/* ===== 峰位置竖线（曲线下方） ===== */}
+        {visibleBases.map(({ idx, base, x }) => {
+          const color = BASE_COLORS[base] || '#ccc'
+          if (showBaseLabels) {
+            // 放大时：细竖线标记每个碱基位置
+            return <line key={`vl-${idx}`} x1={x} y1={plotTop} x2={x} y2={plotBottom}
+              stroke={color} strokeWidth={0.3} opacity={0.15} />
+          }
+          // 缩小时：淡色峰位标记
+          return <line key={`vl-${idx}`} x1={x} y1={plotTop} x2={x} y2={plotBottom}
+            stroke={color} strokeWidth={0.4} opacity={0.12} />
+        })}
 
         {/* ===== Trace 曲线 ===== */}
         {(['A', 'C', 'G', 'T'] as const).map(base => (
@@ -387,6 +507,20 @@ export default function ChromatogramViewer({
             opacity={0.85}
           />
         ))}
+
+        {/* ===== 峰顶标记点（渲染在曲线之上） ===== */}
+        {visibleBases.map(({ idx, base, x, peakY }) => {
+          const color = BASE_COLORS[base] || '#ccc'
+          const isActive = idx === selectedBase || idx === hoveredBase
+          if (!showBaseLabels) return null
+          return (
+            <g key={`pd-${idx}`}>
+              <line x1={x} y1={peakY} x2={x} y2={bpLabelH + refLabelH}
+                stroke={color} strokeWidth={isActive ? 1.2 : 0.6} opacity={isActive ? 0.7 : 0.3} strokeDasharray={isActive ? 'none' : '2,2'} />
+              <circle cx={x} cy={peakY} r={isActive ? 4 : 2.5} fill={color} opacity={isActive ? 1 : 0.7} stroke="white" strokeWidth={isActive ? 1.5 : 0.8} />
+            </g>
+          )
+        })}
 
         {/* ===== 选中/悬停高亮 ===== */}
         {(selectedBase !== null || hoveredBase !== null) && (() => {
@@ -401,13 +535,49 @@ export default function ChromatogramViewer({
 
         {/* ===== X 轴刻度（碱基序号） ===== */}
         {ticks.map((tick, i) => (
-          <g key={i}>
+          <g key={`xt-${i}`}>
             <line x1={tick.x} y1={plotBottom} x2={tick.x} y2={plotBottom + 4} stroke="#94a3b8" strokeWidth={0.5} />
             <text x={tick.x} y={plotBottom + axisH - 4} textAnchor="middle" fontSize={9} fill="#94a3b8">{tick.label}</text>
           </g>
         ))}
 
-        {/* ===== 质量值条形图 ===== */}
+        {/* ===== 连续质量色带（始终可见，不依赖缩放级别） ===== */}
+        {qualityValues && qualityValues.length > 0 && (() => {
+          const bandY = height - axisH - qualityBarH
+          const { start, end } = visibleBaseRange
+          const rects: JSX.Element[] = []
+          for (let i = start; i <= end && i < seqLen && i < qualityValues.length; i++) {
+            const q = qualityValues[i]
+            if (q === 0 && sequence?.[i] === 'N') continue
+            const x1 = i > 0 ? (baseToX(i - 1) + baseToX(i)) / 2 : baseToX(i) - bpPerPixel / 2
+            const x2 = i < end && i < seqLen - 1 ? (baseToX(i) + baseToX(i + 1)) / 2 : baseToX(i) + bpPerPixel / 2
+            const rx = Math.max(yAxisW, Math.min(x1, width))
+            const rw = Math.max(0.5, Math.min(x2, width) - rx)
+            rects.push(
+              <rect key={`qb-${i}`} x={rx} y={bandY} width={rw} height={qualityBarH}
+                fill={QUALITY_COLOR(q)} opacity={0.35} />
+            )
+          }
+          return (
+            <g>
+              {rects}
+              {/* 色带边框 */}
+              <rect x={yAxisW} y={bandY} width={plotWidth} height={qualityBarH}
+                fill="none" stroke="#e2e8f0" strokeWidth={0.5} />
+              {/* 质量阈值参考线 (Q20) */}
+              <line x1={yAxisW} y1={bandY + qualityBarH * (1 - 20 / 60)}
+                x2={width} y2={bandY + qualityBarH * (1 - 20 / 60)}
+                stroke="#f59e0b" strokeWidth={0.5} strokeDasharray="3,3" opacity={0.5} />
+            </g>
+          )
+        })()}
+
+        {/* ===== 质量值标签 ===== */}
+        {qualityValues && qualityValues.length > 0 && (
+          <text x={yAxisW - 6} y={height - axisH - qualityBarH / 2 + 3} textAnchor="end" fontSize={8} fill="#94a3b8" fontFamily="monospace">Q</text>
+        )}
+
+        {/* ===== 质量值条形图（放大时叠加在色带上） ===== */}
         {qualityValues && qualityValues.length > 0 && showBaseLabels && visibleBases.map(({ idx, x }) => {
           const q = idx < qualityValues.length ? qualityValues[idx] : 0
           const barW = Math.max(2, bpPerPixel * 0.5)
@@ -416,7 +586,7 @@ export default function ChromatogramViewer({
             <rect key={`q-${idx}`}
               x={x - barW / 2} y={height - axisH - barH}
               width={barW} height={barH}
-              fill={QUALITY_COLOR(q)} opacity={0.6} rx={1}
+              fill={QUALITY_COLOR(q)} opacity={0.7} rx={1}
             />
           )
         })}
@@ -435,40 +605,87 @@ export default function ChromatogramViewer({
         {/* ===== 选中碱基信息气泡 ===== */}
         {selectedBase !== null && selectedBase < seqLen && (
           <g>
-            <rect x={Math.min(baseToX(selectedBase) + 5, width - 200)} y={plotTop + 2}
-              width={195} height={hasRef ? 42 : 26} rx={4} fill="white" stroke="#e2e8f0" strokeWidth={1} opacity={0.95} />
-            <text x={Math.min(baseToX(selectedBase) + 10, width - 195)} y={plotTop + 16}
+            <rect x={Math.min(baseToX(selectedBase) + 5, width - 210)} y={plotTop + 2}
+              width={200} height={hasRef && alignOffset >= 0 ? 42 : 26} rx={4} fill="white" stroke="#e2e8f0" strokeWidth={1} opacity={0.95} />
+            <text x={Math.min(baseToX(selectedBase) + 10, width - 205)} y={plotTop + 16}
               fontSize={10} fontFamily="monospace" fill="#334155">
               #{selectedBase + 1} {sequence[selectedBase]}
               {qualityValues?.[selectedBase] != null ? `  Q:${qualityValues[selectedBase]}` : ''}
             </text>
-            {hasRef && (
-              <text x={Math.min(baseToX(selectedBase) + 10, width - 195)} y={plotTop + 34}
-                fontSize={10} fontFamily="monospace"
-                fill={mismatchMap.has(selectedBase) ? '#dc2626' : '#22c55e'}>
-                Ref: {selectedBase < referenceSequence!.length ? referenceSequence![selectedBase] : '-'}
-                {mismatchMap.has(selectedBase) ? ' (错配)' : ' (匹配)'}
-              </text>
-            )}
+            {hasRef && alignOffset >= 0 && (() => {
+              const refIdx = selectedBase - alignOffset
+              if (refIdx < 0 || refIdx >= referenceSequence!.length) return null
+              return (
+                <text x={Math.min(baseToX(selectedBase) + 10, width - 205)} y={plotTop + 34}
+                  fontSize={10} fontFamily="monospace"
+                  fill={mismatchMap.has(selectedBase) ? '#dc2626' : '#22c55e'}>
+                  Ref: {referenceSequence![refIdx]}
+                  {mismatchMap.has(selectedBase) ? ' (错配)' : ' (匹配)'}
+                </text>
+              )
+            })()}
           </g>
         )}
       </svg>
 
-      {/* 底部信息栏 */}
-      <div className="flex items-center justify-between px-2 py-1 text-[10px] text-slate-400 bg-slate-50 rounded-b">
-        <span>
+      {/* 底部导航控制栏 */}
+      <div className="flex items-center justify-between px-2 py-1.5 text-[10px] text-slate-500 bg-slate-50 border-t border-slate-100 gap-2">
+        {/* 左侧：视图控制按钮 */}
+        <div className="flex items-center gap-1">
+          <button onClick={() => panBy('left')} className="px-2 py-0.5 rounded border border-slate-200 hover:bg-slate-100 active:bg-slate-200 text-slate-600" title="向左平移 (←)">
+            ◀
+          </button>
+          <button onClick={() => panBy('right')} className="px-2 py-0.5 rounded border border-slate-200 hover:bg-slate-100 active:bg-slate-200 text-slate-600" title="向右平移 (→)">
+            ▶
+          </button>
+          <div className="w-px h-4 bg-slate-200 mx-1" />
+          <button onClick={() => zoomToBases(20)} className="px-1.5 py-0.5 rounded border border-slate-200 hover:bg-slate-100 active:bg-slate-200 text-slate-600 text-[9px]" title="缩放到 20bp">
+            20bp
+          </button>
+          <button onClick={() => zoomToBases(50)} className="px-1.5 py-0.5 rounded border border-slate-200 hover:bg-slate-100 active:bg-slate-200 text-slate-600 text-[9px]" title="缩放到 50bp">
+            50bp
+          </button>
+          <button onClick={() => zoomToBases(100)} className="px-1.5 py-0.5 rounded border border-slate-200 hover:bg-slate-100 active:bg-slate-200 text-slate-600 text-[9px]" title="缩放到 100bp">
+            100bp
+          </button>
+          <button onClick={() => { setViewStart(0); setViewEnd(dataPoints) }} className="px-1.5 py-0.5 rounded border border-slate-200 hover:bg-slate-100 active:bg-slate-200 text-slate-600 text-[9px]" title="显示全部">
+            全部
+          </button>
+        </div>
+
+        {/* 中间：状态信息 */}
+        <span className="truncate">
           {seqLen} bases | 碱基 {visibleBaseRange.start + 1}-{visibleBaseRange.end + 1} / {dataPoints} 数据点
-          {hasRef && <span className="ml-2 text-amber-600">Ref: {referenceSource} ({mismatchMap.size} 错配)</span>}
+          {hasRef && alignOffset >= 0 && <span className="ml-2 text-amber-600">Ref: {referenceSource} (偏移{alignOffset}, {mismatchMap.size} 错配)</span>}
+          {hasRef && alignOffset < 0 && <span className="ml-2 text-slate-400">Ref: {referenceSource} (未比对)</span>}
         </span>
-        <div className="flex items-center gap-3">
+
+        {/* 右侧：图例 */}
+        <div className="flex items-center gap-2">
           {(['A', 'C', 'G', 'T'] as const).map(base => (
             <span key={base} className="flex items-center gap-0.5">
               <span className="w-2 h-2 rounded-full inline-block" style={{ backgroundColor: BASE_COLORS[base] }} />
               {base}
             </span>
           ))}
+          {qualityValues && qualityValues.length > 0 && (
+            <>
+              <span className="w-px h-3 bg-slate-200" />
+              <span className="flex items-center gap-0.5">
+                <span className="w-2 h-2 rounded-sm inline-block" style={{ backgroundColor: '#22c55e' }} />Q≥40
+              </span>
+              <span className="flex items-center gap-0.5">
+                <span className="w-2 h-2 rounded-sm inline-block" style={{ backgroundColor: '#3b82f6' }} />≥30
+              </span>
+              <span className="flex items-center gap-0.5">
+                <span className="w-2 h-2 rounded-sm inline-block" style={{ backgroundColor: '#f59e0b' }} />≥20
+              </span>
+              <span className="flex items-center gap-0.5">
+                <span className="w-2 h-2 rounded-sm inline-block" style={{ backgroundColor: '#ef4444' }} />&lt;10
+              </span>
+            </>
+          )}
         </div>
-        <span>滚轮缩放 | 拖拽平移 | 点击选中</span>
       </div>
     </div>
   )

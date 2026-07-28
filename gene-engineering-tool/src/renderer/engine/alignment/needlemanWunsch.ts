@@ -5,6 +5,9 @@
 
 import type { AlignmentParams, AlignmentResult } from './types'
 import { getScore, isSimilarAA } from './scoring'
+import { createLogger } from '../../utils/logger'
+
+const log = createLogger('NeedlemanWunsch')
 
 const NEG_INF = -Infinity
 
@@ -21,6 +24,7 @@ export function needlemanWunsch(
   params: AlignmentParams,
   isProtein: boolean = false
 ): AlignmentResult {
+  log.info(`Starting NW alignment: seq1(${seq1.length}) vs seq2(${seq2.length}), isProtein=${isProtein}`)
   const n = seq1.length
   const m = seq2.length
   const { gapOpen, gapExtend } = params
@@ -160,6 +164,7 @@ export function needlemanWunsch(
   const identity = alignLen > 0 ? Math.round((matches / alignLen) * 10000) / 100 : 0
   const similarity = alignLen > 0 ? Math.round(((matches + similarCount) / alignLen) * 10000) / 100 : 0
 
+  log.debug(`NW alignment complete: score=${bestScore}, identity=${identity}%, similarity=${similarity}%, gaps=${gapCount}`)
   return {
     alignedSeq1: a1,
     alignedSeq2: a2,

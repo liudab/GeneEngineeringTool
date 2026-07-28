@@ -1,16 +1,20 @@
 import type { GenBankRecord, GenBankFeature, FastaRecord } from '../shared/types'
+import { createLogger } from './logger'
+
+const log = createLogger('FileParser')
 
 /**
- * 解析 SnapGene .dna 二进制格式文件
+ * 解析外部 .dna 二进制格式文件
  * 格式：一系列数据包，每包 = 1字节类型 + 4字节大端长度 + N字节数据
  * 关键包类型：
  *   0x00 = DNA序列（1字节标志 + ASCII碱基）
  *   0x06 = Notes XML（元数据）
  *   0x08 = 附加属性 XML（粘性末端等）
- *   0x09 = 文件头（"SnapGene" + 版本）
+ *   0x09 = 文件头（"external" + 版本）
  *   0x0A = Features XML（特征注释）
  */
-export function parseSnapGene(buffer: Buffer): GenBankRecord {
+export function parseDnaFormat(buffer: Buffer): GenBankRecord {
+  log.info(`Parsing external .dna format: ${buffer.length} bytes`)
   let sequence = ''
   let featuresXml = ''
   let notesXml = ''
@@ -50,10 +54,10 @@ export function parseSnapGene(buffer: Buffer): GenBankRecord {
   }
 
   // 从Features XML解析特征
-  const features = parseSnapGeneFeatures(featuresXml)
+  const features = parseDnaFormatFeatures(featuresXml)
 
   // 从Notes XML解析元数据
-  const { name, description } = parseSnapGeneNotes(notesXml)
+  const { name, description } = parseDnaFormatNotes(notesXml)
 
   // 从附加属性判断拓扑结构（粘性末端=0表示环形）
   let topology: 'circular' | 'linear' = 'circular'
@@ -65,7 +69,7 @@ export function parseSnapGene(buffer: Buffer): GenBankRecord {
     }
   }
 
-  return {
+  const result = {
     name,
     description,
     sequence,
@@ -75,12 +79,14 @@ export function parseSnapGene(buffer: Buffer): GenBankRecord {
     version: '',
     topology
   }
+  log.info(`External .dna format parse complete: seq=${sequence.length}bp, features=${features.length}, topology=${topology}`)
+  return result
 }
 
 /**
- * 从SnapGene Features XML解析特征列表
+ * 从外部 .dna Features XML解析特征列表
  */
-function parseSnapGeneFeatures(xml: string): GenBankFeature[] {
+function parseDnaFormatFeatures(xml: string): GenBankFeature[] {
   const features: GenBankFeature[] = []
   if (!xml) return features
 
@@ -157,9 +163,9 @@ function parseSnapGeneFeatures(xml: string): GenBankFeature[] {
 }
 
 /**
- * 从SnapGene Notes XML解析名称和描述
+ * 从外部 .dna Notes XML解析名称和描述
  */
-function parseSnapGeneNotes(xml: string): { name: string; description: string } {
+function parseDnaFormatNotes(xml: string): { name: string; description: string } {
   if (!xml) return { name: '', description: '' }
 
   const typeMatch = xml.match(/<Type>([^<]*)<\/Type>/)
@@ -184,6 +190,7 @@ function getAttr(attrStr: string, name: string): string {
  * 解析 GenBank 格式文件
  */
 export function parseGenBank(content: string): GenBankRecord {
+  log.info(`GenBank parsing: ${content.length} chars`)
   // 标准化换行符：处理 CRLF (\r\n) 和 旧 Mac (\r) 格式
   const lines = content.replace(/\r/g, '').split('\n')
   let name = ''
@@ -283,6 +290,19 @@ export function parseGenBank(content: string): GenBankRecord {
         currentFeature.qualifiers![currentQualifierKey] += continuation
         continue
       }
+
+      // Continuation of feature location (multi-line join() etc.)
+      // 当行以 21 空格开头、不以 / 开头、且当前无活动限定符键时，说明是 location 续行
+      if (line.match(/^ {21}\S/) && currentFeature && !currentQualifierKey) {
+        const locCont = line.substring(21).trim()
+        currentFeature.location = (currentFeature.location || '') + locCont
+        // 重新解析完整 location 的坐标
+        const reparsed = parseLocation(currentFeature.location)
+        currentFeature.start = reparsed.start
+        currentFeature.end = reparsed.end
+        currentFeature.strand = reparsed.strand
+        continue
+      }
     }
 
     if (section === 'sequence') {
@@ -301,6 +321,7 @@ export function parseGenBank(content: string): GenBankRecord {
   // 从 mRNA/CDS 的 join() 位置推断 exon 和 intron 特征
   inferExonIntronFeatures(features)
 
+  log.info(`GenBank parse complete: seq=${sequence.length}bp, features=${features.length}, name=${name}`)
   return {
     name,
     description,
@@ -435,7 +456,7 @@ export function inferExonIntronFeatures(features: GenBankFeature[]): void {
   // 将推断的特征添加到列表
   if (newFeatures.length > 0) {
     features.push(...newFeatures)
-    console.log(`[GenBank] Inferred ${newFeatures.filter(f => f.type === 'exon').length} exons and ${newFeatures.filter(f => f.type === 'intron').length} introns from join() features`)
+    log.info(`Inferred ${newFeatures.filter(f => f.type === 'exon').length} exons and ${newFeatures.filter(f => f.type === 'intron').length} introns from join() features`)
   }
 }
 
@@ -507,6 +528,7 @@ function stripQuotes(s: string): string {
  * 解析 FASTA 格式文件
  */
 export function parseFasta(content: string): FastaRecord[] {
+  log.info(`FASTA parsing: ${content.length} chars`)
   const records: FastaRecord[] = []
   const lines = content.replace(/\r/g, '').split('\n')
   let currentId = ''
@@ -548,5 +570,201 @@ export function parseFasta(content: string): FastaRecord[] {
     })
   }
 
+  log.info(`FASTA parse complete: ${records.length} records${records.length > 0 ? `, total ${records.reduce((s, r) => s + r.sequence.length, 0)}bp` : ''}`)
   return records
+}
+
+/**
+ * 解析 EMBL 格式文件
+ * 规格书: optimization-spec.md §1.1 EMBL格式支持, 基因工程软件优化规格说明书.md §3.1
+ *
+ * EMBL 格式关键字:
+ *   ID = 标识行 (名称/拓扑/长度)
+ *   AC = 登录号
+ *   DE = 描述
+ *   KW = 关键词
+ *   OS = 生物体
+ *   FT = 特征表
+ *   SQ = 序列起始
+ *   // = 记录结束
+ */
+export function parseEMBL(content: string): GenBankRecord {
+  log.info(`EMBL parsing: ${content.length} chars`)
+  const lines = content.replace(/\r/g, '').split('\n')
+
+  let name = ''
+  let description = ''
+  let accession = ''
+  let sequence = ''
+  let topology: 'circular' | 'linear' = 'linear'
+  const features: GenBankFeature[] = []
+
+  let inSequence = false
+  let currentFeature: Partial<GenBankFeature> | null = null
+  let currentQualifier = ''
+  let currentQualValue = ''
+
+  const flushQualifier = () => {
+    if (currentFeature && currentQualifier && currentQualValue) {
+      if (!currentFeature.qualifiers) currentFeature.qualifiers = {}
+      currentFeature.qualifiers[currentQualifier] = currentQualValue.replace(/^"|"$/g, '')
+    }
+    currentQualifier = ''
+    currentQualValue = ''
+  }
+
+  const flushFeature = () => {
+    flushQualifier()
+    if (currentFeature && currentFeature.type) {
+      features.push({
+        type: currentFeature.type,
+        location: currentFeature.location || '',
+        start: currentFeature.start ?? 0,
+        end: currentFeature.end ?? 0,
+        strand: currentFeature.strand ?? 1,
+        qualifiers: currentFeature.qualifiers || {},
+        label: currentFeature.qualifiers?.['gene'] || currentFeature.qualifiers?.['product'] || currentFeature.qualifiers?.['label'] || currentFeature.type
+      } as GenBankFeature)
+    }
+    currentFeature = null
+  }
+
+  for (const line of lines) {
+    if (inSequence) {
+      // SQ 行之后的序列行: 空格分隔的碱基 + 末尾数字
+      if (line.startsWith('//')) break
+      // 提取碱基: 去除空格和末尾数字
+      const seqLine = line.replace(/\s/g, '').replace(/\d+$/, '')
+      sequence += seqLine.toLowerCase()
+      continue
+    }
+
+    if (line.startsWith('ID   ')) {
+      // ID   name; SV 1; circular; DNA; STD; UNC; 5000 BP.
+      const parts = line.substring(5).trim().split(';').map(s => s.trim())
+      name = parts[0] || ''
+      for (const p of parts) {
+        if (p.toLowerCase().includes('circular')) topology = 'circular'
+        if (p.toLowerCase().includes('linear')) topology = 'linear'
+      }
+    } else if (line.startsWith('AC   ')) {
+      accession = line.substring(5).trim().replace(/;$/, '')
+    } else if (line.startsWith('DE   ')) {
+      description += (description ? ' ' : '') + line.substring(5).trim()
+    } else if (line.startsWith('SQ   ')) {
+      inSequence = true
+    } else if (line.startsWith('FT   ')) {
+      const ftContent = line.substring(5)
+      // 新特征: FT   feature_type    location
+      const featureMatch = ftContent.match(/^(\S+)\s+(.*)$/)
+      if (featureMatch && !ftContent.startsWith('/')) {
+        flushFeature()
+        const type = featureMatch[1]
+        const locStr = featureMatch[2].trim()
+        const { start, end, strand } = parseEMBLLocation(locStr)
+        currentFeature = { type, start, end, strand, qualifiers: {} }
+      } else if (ftContent.startsWith('/')) {
+        // 限定符: /qualifier="value" or /qualifier
+        flushQualifier()
+        const qualContent = ftContent.substring(1).trim()
+        const eqIdx = qualContent.indexOf('=')
+        if (eqIdx !== -1) {
+          currentQualifier = qualContent.substring(0, eqIdx)
+          currentQualValue = qualContent.substring(eqIdx + 1)
+        } else {
+          currentQualifier = qualContent
+          currentQualValue = 'true'
+        }
+      } else if (currentQualifier) {
+        // 续行
+        currentQualValue += ftContent.trim()
+      }
+    }
+  }
+
+  flushFeature()
+
+  const result: GenBankRecord = {
+    name,
+    description,
+    sequence: sequence.toLowerCase(),
+    size: sequence.length,
+    features,
+    accession,
+    version: '',
+    topology
+  }
+
+  log.info(`EMBL parse complete: seq=${sequence.length}bp, features=${features.length}, topology=${topology}`)
+  return result
+}
+
+/** 解析 EMBL 位置格式: 123..456, complement(123..456), join(123..456,789..999) */
+function parseEMBLLocation(loc: string): { start: number; end: number; strand: 1 | -1 } {
+  let strand: 1 | -1 = 1
+  let inner = loc
+
+  if (loc.startsWith('complement(')) {
+    strand = -1
+    inner = loc.slice(11, -1)
+  }
+  // 取第一个区间
+  const rangeMatch = inner.match(/(\d+)\.\.(\d+)/)
+  if (rangeMatch) {
+    return { start: parseInt(rangeMatch[1]) - 1, end: parseInt(rangeMatch[2]) - 1, strand }
+  }
+  // 单碱基
+  const num = parseInt(inner)
+  if (!isNaN(num)) return { start: num - 1, end: num - 1, strand }
+  return { start: 0, end: 0, strand }
+}
+
+/** 导出序列为 EMBL 格式 */
+export function exportEMBL(record: GenBankRecord): string {
+  const lines: string[] = []
+  const topology = record.topology || 'linear'
+  lines.push(`ID   ${record.name || 'Unnamed'}; SV 1; ${topology}; DNA; STD; UNC; ${record.sequence.length} BP.`)
+  lines.push('XX')
+  if (record.accession) {
+    lines.push(`AC   ${record.accession};`)
+    lines.push('XX')
+  }
+  if (record.description) {
+    lines.push(`DE   ${record.description}`)
+    lines.push('XX')
+  }
+  // 特征表
+  if (record.features && record.features.length > 0) {
+    lines.push('FH   Key             Location/Qualifiers')
+    lines.push('FH')
+    for (const f of record.features) {
+      const strand = f.strand === -1 ? 'complement(' : ''
+      const close = f.strand === -1 ? ')' : ''
+      const loc = `${strand}${f.start + 1}..${f.end + 1}${close}`
+      lines.push(`FT   ${f.type.padEnd(16)}${loc}`)
+      if (f.qualifiers) {
+        for (const [key, val] of Object.entries(f.qualifiers)) {
+          lines.push(`FT                   /${key}="${val}"`)
+        }
+      }
+    }
+    lines.push('XX')
+  }
+  // 序列
+  const seq = record.sequence.toLowerCase()
+  lines.push(`SQ   Sequence ${seq.length} BP; ${countBases(seq, 'a')} A; ${countBases(seq, 'c')} C; ${countBases(seq, 'g')} G; ${countBases(seq, 't')} T; ${seq.length - countBases(seq, 'a') - countBases(seq, 'c') - countBases(seq, 'g') - countBases(seq, 't')} other;`)
+  for (let i = 0; i < seq.length; i += 60) {
+    const chunk = seq.slice(i, i + 60)
+    const groups = chunk.match(/.{1,10}/g) || []
+    const formatted = groups.join(' ')
+    lines.push(`     ${formatted.padEnd(66)}${i + chunk.length}`)
+  }
+  lines.push('//')
+  return lines.join('\n')
+}
+
+function countBases(seq: string, base: string): number {
+  let count = 0
+  for (const c of seq) if (c === base) count++
+  return count
 }

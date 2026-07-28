@@ -1,8 +1,12 @@
 import { useState, useEffect } from 'react'
 import { Search, Plus, Trash2, Edit2, X, Link2, Upload, Map } from 'lucide-react'
 import type { LabVector, Vector, GeneSequence } from '../../shared/types'
+import { useLifecycleLog, useModuleLogger } from '../hooks/useDebugLog'
 
 export default function LabVectorPage() {
+  useLifecycleLog('LabVectorPage')
+  const log = useModuleLogger('LabVectorPage')
+
   const [labVectors, setLabVectors] = useState<any[]>([])
   const [searchQuery, setSearchQuery] = useState('')
   const [selected, setSelected] = useState<any>(null)
@@ -18,8 +22,10 @@ export default function LabVectorPage() {
   const [importMsg, setImportMsg] = useState('')
 
   const handleImport = async () => {
+    log.info('Importing lab vector files...')
     const result = await window.api.importLabVectorFiles()
     if (result?.success && result.count > 0) {
+      log.info(`Imported ${result.count} vectors`)
       setImportMsg(`成功导入 ${result.count} 个载体`)
       loadLabVectors()
       setTimeout(() => setImportMsg(''), 3000)
@@ -33,12 +39,19 @@ export default function LabVectorPage() {
   }, [])
 
   const loadLabVectors = async () => {
-    const data = await window.api.getLabVectors()
-    setLabVectors(data)
+    log.info('Loading lab vectors...')
+    try {
+      const data = await window.api.getLabVectors()
+      log.info(`Loaded ${data.length} lab vectors`)
+      setLabVectors(data)
+    } catch (err) {
+      log.error('Failed to load lab vectors', err)
+    }
   }
 
   const handleDelete = async (id: number) => {
     if (!confirm('确定删除？')) return
+    log.info(`Deleting lab vector id=${id}`)
     await window.api.deleteLabVector(id)
     loadLabVectors()
     if (selected?.id === id) setSelected(null)
@@ -61,8 +74,13 @@ export default function LabVectorPage() {
 
   const handleSubmit = async () => {
     if (!formData.name) return
-    if (editing) { await window.api.updateLabVector(editing.id, formData) }
-    else { await window.api.createLabVector(formData) }
+    if (editing) {
+      console.log(`[LabVectorPage] Updating lab vector id=${editing.id}: ${formData.name}`)
+      await window.api.updateLabVector(editing.id, formData)
+    } else {
+      console.log(`[LabVectorPage] Creating lab vector: ${formData.name}`)
+      await window.api.createLabVector(formData)
+    }
     setShowForm(false)
     loadLabVectors()
   }
