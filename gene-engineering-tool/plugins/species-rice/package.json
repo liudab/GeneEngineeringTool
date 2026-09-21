@@ -1,9 +1,0 @@
-{
-  "name": "@helixcraft/species-rice",
-  "version": "1.0.0",
-  "description": "HelixCraft 水稻基因数据库增强插件",
-  "main": "plugin.json",
-  "keywords": ["helixcraft", "species-plugin", "rice", "oryza-sativa"],
-  "author": "HelixCraft",
-  "license": "MIT"
-}
