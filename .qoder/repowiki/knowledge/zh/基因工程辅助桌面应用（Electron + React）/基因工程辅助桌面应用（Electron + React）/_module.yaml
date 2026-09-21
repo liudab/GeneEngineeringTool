@@ -1,8 +1,0 @@
-schema_version: 1
-module_path: gene_engineering_tool
-title: 基因工程辅助桌面应用（Electron + React）
-scope:
-    - gene-engineering-tool/
-source_files: []
-depends_on: []
-related_to: []
